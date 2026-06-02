@@ -1,0 +1,15 @@
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+windows-print-station/bin/
+windows-print-station/obj/
+windows-print-station/*.user
+
+*.log
+*.tmp
+*.cache

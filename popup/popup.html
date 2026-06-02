@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=600, height=800, initial-scale=1.0, user-scalable=no">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Current-RMS Print Server</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Current-RMS Print Server</h1>
+            <p class="subtitle">Barcode scanning and label printing</p>
+            <button type="button" id="settingsToggle" class="settings-btn" title="Settings">⚙️</button>
+        </header>
+
+        <main>
+            <!-- Settings Section (Hidden by default) -->
+            <div id="settingsSection" class="settings-section hidden">
+                <h3>Settings</h3>
+                <form id="configForm">
+                    <div class="form-group">
+                        <label for="subdomain">Subdomain:</label>
+                        <div class="input-wrapper">
+                            <input type="text" id="subdomain" name="subdomain" placeholder="yourcompany" required>
+                            <span class="domain-suffix">.current-rms.com</span>
+                        </div>
+                        <small class="help-text">Enter your Current-RMS subdomain (without .current-rms.com)</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="apiKey">API Key:</label>
+                        <input type="password" id="apiKey" name="apiKey" placeholder="Enter your API key" required>
+                        <small class="help-text">Your API key will be stored securely on your device</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="documentId">Document ID:</label>
+                        <input type="number" id="documentId" name="documentId" placeholder="1000167" required>
+                        <small class="help-text">Document ID for flightcase labels (varies by Current-RMS system)</small>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="submit" id="saveBtn" class="btn btn-primary">Save Configuration</button>
+                        <button type="button" id="testBtn" class="btn btn-secondary">Test Connection</button>
+                    </div>
+                </form>
+
+                <div id="status" class="status hidden"></div>
+            </div>
+
+            <!-- Main Scanner Section -->
+            <div id="scannerSection" class="scanner-section">
+                <h3>Barcode Scanner</h3>
+                
+                <!-- PDF Status and Manual Download -->
+                <div class="pdf-status">
+                    <div id="pdfStatus" class="status-indicator">
+                        <span id="pdfStatusText">No PDF loaded</span>
+                        <div class="pdf-buttons">
+                            <button type="button" id="refreshPdfBtn" class="btn btn-secondary btn-small" title="Refresh PDF">🔄</button>
+                            <button type="button" id="downloadPdfBtn" class="btn btn-secondary btn-small">Download PDF</button>
+                        </div>
+                    </div>
+                    <div class="pdf-auto-refresh">
+                        <label>
+                            <input type="checkbox" id="autoRefreshCheckbox" checked>
+                            Auto-refresh every <span id="refreshInterval">30</span> seconds
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Mode Toggle -->
+                <div class="mode-toggle">
+                    <label>
+                        <input type="radio" name="printMode" value="single" id="singlePrintMode" checked>
+                        Single Print
+                    </label>
+                    <label>
+                        <input type="radio" name="printMode" value="multi" id="multiPrintMode">
+                        Multi Print
+                    </label>
+                </div>
+
+                <div class="scan-options">
+                    <label>
+                        <input type="checkbox" id="autoPrintCheckbox" checked>
+                        Open print dialog after each scan
+                    </label>
+                </div>
+
+                <!-- Single Print Section -->
+                <section id="singlePrintSection" class="search-section">
+                    <h2>🔍 Barcode Search</h2>
+                    <div class="barcode-section">
+                        <input type="text" id="barcodeInput" placeholder="Scan or enter barcode" autofocus>
+                        <button type="button" id="searchBtn" class="btn btn-primary">Search</button>
+                    </div>
+                </section>
+
+                <!-- Multi Print Section (Hidden by default) -->
+                <section id="multiPrintSection" class="multi-print-section hidden">
+                    <h2>Multi-Print Barcodes</h2>
+                    <div class="form-group">
+                        <label for="multiBarcodeInput">Paste or type barcodes (one per line):</label>
+                        <textarea id="multiBarcodeInput" rows="5" placeholder="Barcode 1\nBarcode 2\n..."></textarea>
+                    </div>
+                    <div class="multi-print-actions">
+                        <button type="button" id="processMultiBarcodesBtn" class="btn btn-primary">Process Barcodes</button>
+                        <button type="button" id="clearMultiBarcodeInputBtn" class="btn btn-secondary">Clear Input</button>
+                    </div>
+                    <div class="page-numbers-output">
+                        <h4>Page Numbers for Print:</h4>
+                        <textarea id="pageNumbersOutput" rows="3" readonly placeholder="e.g., 1,2,3,4"></textarea>
+                        <button type="button" id="copyPageNumbersBtn" class="btn btn-secondary">Copy</button>
+                    </div>
+                </section>
+
+                <!-- Label Preview Section -->
+                <section class="preview-section">
+                    <h2>👁️ Label Preview</h2>
+                    <div id="previewContainer">
+                        <p>No label selected</p>
+                        <p>Scan a barcode to see the label preview</p>
+                    </div>
+                    <div id="previewActions" class="preview-actions hidden">
+                        <button type="button" id="printBtn" class="btn btn-primary">🖨️ Print Label</button>
+                        <button type="button" id="downloadBtn" class="btn btn-secondary">💾 Download</button>
+                    </div>
+                </section>
+
+                <!-- Status Messages -->
+                <div id="statusMessages"></div>
+            </div>
+        </main>
+
+        <footer>
+            <p class="version">Version 2.6.1</p>
+        </footer>
+    </div>
+
+    <script src="../lib/pdf.min.js"></script>
+    <script src="../lib/pdf-renderer.js"></script>
+    <script src="popup.js"></script>
+</body>
+</html>
