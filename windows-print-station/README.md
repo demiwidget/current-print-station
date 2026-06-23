@@ -41,6 +41,32 @@ windows-print-station\bin\Release\net9.0-windows\win-x64\publish-YYYYMMDD-HHMMSS
 
 Run `CurrentRmsPrintStation.exe` from that folder on the print-station PC.
 
+## App Updates
+
+The app now uses Velopack for normal installed-app updates. Once releases are packaged with Velopack and uploaded to the GitHub Releases page for:
+
+```text
+https://github.com/demiwidget/current-print-station
+```
+
+the print station checks for updates on startup. If a release is available, the kiosk screen shows an update notice. The settings page also has a `Check Updates` button.
+
+Velopack applies delta packages first where possible, so small changes patch into the installed app instead of replacing the whole folder. If no delta is available, Velopack can fall back to the full package. Running from `dotnet run` or a raw publish folder is still useful for testing, but the updater is only active after the app has been installed from a Velopack release.
+
+To make an install/update release, double-click:
+
+```text
+Package Print Station Update.cmd
+```
+
+That creates release files in:
+
+```text
+Releases
+```
+
+Upload those files to a GitHub Release tagged with the same app version, for example `v2.7.0`. The first print-station PC install should use the generated setup file. After that, the app can find later GitHub Releases and patch itself from the update notice.
+
 ## First Setup
 
 - Enter the Current-RMS subdomain, without `.current-rms.com`.
@@ -55,6 +81,7 @@ Run `CurrentRmsPrintStation.exe` from that folder on the print-station PC.
 - Select a `Production label printer` for production/client/job labels. After a case label is previewed, set `Prod qty` and use `Print Production Label` to print labels formatted as production, italic client, and bold job number.
 - Set `Production width mm`, `Production height mm`, and `Production labels landscape` to match the production label stock. Use `Production left mm` and `Production top mm` to nudge the text on the physical label if the printer driver offsets it.
 - On the kiosk screen, leave `Print when the same case is scanned again` ticked for two-scan printing. Untick it to preview first and print with the button.
+- Set `Flightcase quantity` before using `Print Flightcase Label` if you need more than one main case label. Use `Stillage Print (2)` as a shortcut for printing exactly two main labels.
 - To open settings from the kiosk screen, click the `Label Print Station` title five times.
 - Leave `Find active opportunity from scanned case` ticked for live use.
 - Set `Current view ID` to the prep/current jobs view, for example `1000067`.
@@ -88,4 +115,4 @@ The primary lookup now uses `Current view ID` as the candidate set and searches 
 
 After one label has been found, the app checks that same cached job PDF first on the next scan. This is the fastest path when one prep station is working through cases from a single job.
 
-If the barcode is not found in any PDF from that view, the app falls back to the older asset-number lookup and only accepts a detailed item asset marked `Prepared`.
+If the barcode is not found in any PDF from that view, the app automatically refreshes the current view PDFs once and checks again before it falls back to the older asset-number lookup.

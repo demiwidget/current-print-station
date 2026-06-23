@@ -12,6 +12,7 @@ public sealed class Form1 : Form
     private readonly CurrentRmsClient _currentRmsClient = new();
     private readonly PdfLabelService _pdfLabelService = new();
     private readonly PrintService _printService = new();
+    private readonly UpdateService _updateService = new();
 
     private readonly TextBox _subdomainBox = new();
     private readonly TextBox _apiKeyBox = new();
@@ -41,6 +42,7 @@ public sealed class Form1 : Form
     private readonly NumericUpDown _productionLabelHeightMmBox = new();
     private readonly NumericUpDown _productionLabelLeftMmBox = new();
     private readonly NumericUpDown _productionLabelTopMmBox = new();
+    private readonly NumericUpDown _flightcaseLabelQuantityBox = new();
     private readonly NumericUpDown _productionLabelQuantityBox = new();
     private readonly CheckBox _insideLabelLandscapeBox = new();
     private readonly CheckBox _productionLabelLandscapeBox = new();
@@ -55,31 +57,40 @@ public sealed class Form1 : Form
     private readonly Button _browseLogoButton = new();
     private readonly Button _scanButton = new();
     private readonly Button _printButton = new();
+    private readonly Button _stillagePrintButton = new();
     private readonly Button _printInsideLabelsButton = new();
     private readonly Button _printProductionLabelButton = new();
     private readonly Button _clearButton = new();
     private readonly Button _openLogButton = new();
+    private readonly Button _checkUpdatesButton = new();
+    private readonly Button _openUpdatePageButton = new();
+    private readonly Button _hideUpdateNoticeButton = new();
     private readonly Button _showSettingsButton = new();
     private readonly Button _backToKioskButton = new();
+    private readonly ToolTip _toolTip = new();
     private readonly Label _statusLabel = new();
     private readonly Label _kioskStatusLabel = new();
     private readonly ProgressBar _progressBar = new();
     private readonly Label _progressLabel = new();
+    private readonly Label _updateNoticeLabel = new();
     private readonly Label _matchLabel = new();
     private readonly PictureBox _previewBox = new();
     private readonly PictureBox _settingsPreviewBox = new();
     private readonly TextBox _instructionBox = new();
     private readonly CheckBox _printOnSecondScanBox = new();
+    private readonly Panel _updateNoticePanel = new();
     private readonly Panel _kioskPage = new();
     private readonly Panel _settingsPage = new();
 
     private AppSettings _settings = new();
+    private UpdateCheckResult? _availableUpdate;
     private Bitmap? _previewBitmap;
     private LabelMatch? _lastMatch;
     private string _lastPreviewPdfPath = "";
     private bool _syncingPrintMode;
     private bool _isBusy;
     private bool _isAutoDownloading;
+    private bool _updateNoticeDismissed;
     private int _settingsClickCount;
     private DateTime _settingsClickStartedAt = DateTime.MinValue;
     private readonly System.Windows.Forms.Timer _autoDownloadTimer = new();
@@ -122,12 +133,13 @@ public sealed class Form1 : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 4,
+            RowCount = 5,
             Padding = new Padding(24),
             BackColor = Color.FromArgb(234, 239, 242)
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 420));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -146,6 +158,9 @@ public sealed class Form1 : Form
         root.Controls.Add(title, 0, 0);
         root.SetColumnSpan(title, 2);
 
+        root.Controls.Add(BuildUpdateNoticePanel(), 0, 1);
+        root.SetColumnSpan(_updateNoticePanel, 2);
+
         _instructionBox.Multiline = true;
         _instructionBox.ReadOnly = true;
         _instructionBox.BorderStyle = BorderStyle.None;
@@ -157,7 +172,7 @@ public sealed class Form1 : Form
             "Untick second-scan printing to use the Print button instead.";
         _instructionBox.Height = 98;
         _instructionBox.Dock = DockStyle.Fill;
-        root.Controls.Add(_instructionBox, 0, 1);
+        root.Controls.Add(_instructionBox, 0, 2);
         root.SetColumnSpan(_instructionBox, 2);
 
         var scanPanel = new TableLayoutPanel
@@ -232,30 +247,67 @@ public sealed class Form1 : Form
         _progressBar.Visible = false;
         scanPanel.Controls.Add(_progressBar, 0, 6);
 
-        var buttons = NewButtonRow();
+        var actionsPanel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ColumnCount = 1,
+            RowCount = 0,
+            Padding = new Padding(0, 16, 0, 0)
+        };
+
+        actionsPanel.Controls.Add(NewKioskActionLabel("Main label"), 0, actionsPanel.RowCount);
+        actionsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        actionsPanel.RowCount++;
+
+        var mainButtons = NewButtonRow();
+        ConfigureQuantityBox(_flightcaseLabelQuantityBox, 1, 999, 1);
         ConfigureQuantityBox(_productionLabelQuantityBox, 1, 999, 1);
-        ConfigureButton(_scanButton, "Find Label", async () => await ProcessScanAsync());
-        ConfigureButton(_printButton, "Print Label", PrintAndReset);
-        ConfigureButton(_printInsideLabelsButton, "Print Inside Labels", PrintInsideLabels);
-        ConfigureButton(_printProductionLabelButton, "Print Production Label", PrintProductionLabels);
+        ConfigureButton(_scanButton, "Find / Preview", async () => await ProcessScanAsync());
+        ConfigureButton(_printButton, "Print Flightcase Label", PrintAndReset);
+        ConfigureButton(_stillagePrintButton, "Stillage Print (2)", StillagePrintAndReset);
         ConfigureButton(_clearButton, "Reset", ResetForNextScan);
         _printButton.Enabled = false;
+        _stillagePrintButton.Enabled = false;
         _printInsideLabelsButton.Enabled = false;
         _printProductionLabelButton.Enabled = false;
-        buttons.Controls.Add(_scanButton);
-        buttons.Controls.Add(_printButton);
-        buttons.Controls.Add(_printInsideLabelsButton);
-        buttons.Controls.Add(_printProductionLabelButton);
-        buttons.Controls.Add(new Label
+        mainButtons.Controls.Add(_scanButton);
+        mainButtons.Controls.Add(_printButton);
+        mainButtons.Controls.Add(new Label
         {
             AutoSize = true,
-            Text = "Prod qty",
+            Text = "Flightcase quantity",
             Padding = new Padding(6, 7, 4, 0)
         });
-        buttons.Controls.Add(_productionLabelQuantityBox);
-        buttons.Controls.Add(_clearButton);
-        scanPanel.Controls.Add(buttons, 0, 7);
-        root.Controls.Add(scanPanel, 0, 2);
+        mainButtons.Controls.Add(_flightcaseLabelQuantityBox);
+        mainButtons.Controls.Add(_stillagePrintButton);
+        mainButtons.Controls.Add(_clearButton);
+        actionsPanel.Controls.Add(mainButtons, 0, actionsPanel.RowCount);
+        actionsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        actionsPanel.RowCount++;
+
+        actionsPanel.Controls.Add(NewKioskActionLabel("Extra labels"), 0, actionsPanel.RowCount);
+        actionsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        actionsPanel.RowCount++;
+
+        var extraButtons = NewButtonRow();
+        ConfigureButton(_printInsideLabelsButton, "Print Inside Case Labels", PrintInsideLabels);
+        ConfigureButton(_printProductionLabelButton, "Print Production Labels", PrintProductionLabels);
+        extraButtons.Controls.Add(_printInsideLabelsButton);
+        extraButtons.Controls.Add(_printProductionLabelButton);
+        extraButtons.Controls.Add(new Label
+        {
+            AutoSize = true,
+            Text = "Production quantity",
+            Padding = new Padding(6, 7, 4, 0)
+        });
+        extraButtons.Controls.Add(_productionLabelQuantityBox);
+        actionsPanel.Controls.Add(extraButtons, 0, actionsPanel.RowCount);
+        actionsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        actionsPanel.RowCount++;
+
+        scanPanel.Controls.Add(actionsPanel, 0, 7);
+        root.Controls.Add(scanPanel, 0, 3);
 
         var previewPanel = new TableLayoutPanel
         {
@@ -270,7 +322,7 @@ public sealed class Form1 : Form
         _previewBox.BorderStyle = BorderStyle.FixedSingle;
         _previewBox.SizeMode = PictureBoxSizeMode.Zoom;
         previewPanel.Controls.Add(_previewBox, 0, 0);
-        root.Controls.Add(previewPanel, 1, 2);
+        root.Controls.Add(previewPanel, 1, 3);
 
         _logBox.Multiline = true;
         _logBox.ReadOnly = true;
@@ -278,7 +330,7 @@ public sealed class Form1 : Form
         _logBox.Dock = DockStyle.Fill;
         _logBox.BackColor = Color.White;
         _logBox.Margin = new Padding(0, 14, 0, 0);
-        root.Controls.Add(_logBox, 0, 3);
+        root.Controls.Add(_logBox, 0, 4);
         root.SetColumnSpan(_logBox, 2);
 
         _statusLabel.Visible = false;
@@ -298,7 +350,7 @@ public sealed class Form1 : Form
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var buttons = NewButtonRow();
-        ConfigureButton(_backToKioskButton, "Back To Scanner", ShowKioskPage);
+        ConfigureButton(_backToKioskButton, "Save & Back To Scanner", ShowKioskPage);
         buttons.Controls.Add(_backToKioskButton);
         root.Controls.Add(buttons, 0, 0);
 
@@ -308,7 +360,7 @@ public sealed class Form1 : Form
             ColumnCount = 2,
             RowCount = 1
         };
-        content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 450));
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 520));
         content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         content.Controls.Add(BuildControlsPanel(), 0, 0);
         content.Controls.Add(BuildSettingsPreviewPanel(), 1, 0);
@@ -388,12 +440,14 @@ public sealed class Form1 : Form
         AddRow(grid, "Label document ID", _documentIdBox);
 
         var buttons = NewButtonRow();
-        ConfigureButton(_saveButton, "Save", SaveSettingsFromForm);
+        ConfigureButton(_saveButton, "Save Settings", SaveSettingsFromForm);
         ConfigureButton(_testButton, "Test API", async () => await TestConnectionAsync());
         ConfigureButton(_openLogButton, "Open Log", OpenLogFile);
+        ConfigureButton(_checkUpdatesButton, "Check Updates", async () => await CheckForUpdatesInBackgroundAsync(showNoUpdateMessage: true));
         buttons.Controls.Add(_saveButton);
         buttons.Controls.Add(_testButton);
         buttons.Controls.Add(_openLogButton);
+        buttons.Controls.Add(_checkUpdatesButton);
 
         grid.Controls.Add(buttons, 0, grid.RowCount);
         grid.SetColumnSpan(buttons, 2);
@@ -406,14 +460,16 @@ public sealed class Form1 : Form
 
     private Control BuildSourceGroup()
     {
-        var group = NewGroup("Prototype source");
+        var group = NewGroup("Job lookup and cache");
         var grid = NewFormGrid();
 
         _opportunityIdBox.PlaceholderText = "Optional fallback job/opportunity ID";
         _localPdfBox.ReadOnly = true;
 
-        AddRow(grid, "Fallback opportunity ID", _opportunityIdBox);
-        AddRow(grid, "Local PDF", _localPdfBox);
+        AddSectionHeading(grid, "Live lookup");
+        AddRow(grid, "Current view ID", _lookupViewIdBox);
+        AddRow(grid, "Days ahead", _lookupDaysAheadBox);
+        AddRow(grid, "Required Current tag", _requiredTagBox);
 
         _lookupOpportunityBox.Text = "Find active opportunity from scanned case";
         _lookupOpportunityBox.AutoSize = true;
@@ -437,13 +493,25 @@ public sealed class Form1 : Form
         _autoDownloadMinutesBox.Maximum = 240;
         _autoDownloadMinutesBox.Value = 0;
         _requiredTagBox.PlaceholderText = "Optional tag, e.g. Prep";
-        AddRow(grid, "Current view ID", _lookupViewIdBox);
-        AddRow(grid, "Days ahead", _lookupDaysAheadBox);
+        SetTip(_lookupViewIdBox, "The Current-RMS saved view containing the jobs you are actively preparing.");
+        SetTip(_lookupDaysAheadBox, "Only scan jobs starting within this many days. Use 0 to include everything in the view.");
+        SetTip(_requiredTagBox, "Optional Current-RMS tag filter if your prep jobs have a specific tag.");
+        SetTip(_jobCacheMinutesBox, "How long the downloaded job list is reused before asking Current-RMS again.");
+        SetTip(_pdfCacheMinutesBox, "How long downloaded label PDFs are reused before redownloading.");
+        SetTip(_autoDownloadMinutesBox, "Set above 0 to refresh and pre-cache current job PDFs in the background.");
+        SetTip(_opportunityIdBox, "Optional manual job/opportunity ID for testing when live lookup is off or fails.");
+        SetTip(_localPdfBox, "Optional saved PDF for testing without calling Current-RMS.");
+        SetTip(_lookupFilterModesBox, "Advanced Current-RMS lookup filters. Leave as-is unless the lookup needs tuning.");
+
+        AddSectionHeading(grid, "Speed");
         AddRow(grid, "Job cache mins", _jobCacheMinutesBox);
         AddRow(grid, "PDF cache mins", _pdfCacheMinutesBox);
         AddRow(grid, "Auto-download mins", _autoDownloadMinutesBox);
+
+        AddSectionHeading(grid, "Testing and advanced");
+        AddRow(grid, "Fallback job ID", _opportunityIdBox);
+        AddRow(grid, "Test PDF", _localPdfBox);
         AddRow(grid, "Lookup filters", _lookupFilterModesBox);
-        AddRow(grid, "Required tag", _requiredTagBox);
 
         var buttons = NewButtonRow();
         ConfigureButton(_downloadPdfButton, "Download PDF", async () => await DownloadPdfAsync());
@@ -460,7 +528,7 @@ public sealed class Form1 : Form
         {
             AutoSize = true,
             MaximumSize = new Size(400, 0),
-            Text = "Live mode searches the Current-RMS prep/current view first, then scans those PDFs for the barcode. Leave view ID blank to use API asset lookup only."
+            Text = "For normal use, keep live lookup ticked and set the Current view ID to the prep/current jobs view. Test PDF and fallback job ID are mainly for troubleshooting."
         };
         grid.Controls.Add(note, 0, grid.RowCount);
         grid.SetColumnSpan(note, 2);
@@ -514,7 +582,7 @@ public sealed class Form1 : Form
 
     private Control BuildPrintGroup()
     {
-        var group = NewGroup("Printing");
+        var group = NewGroup("Printers and label stock");
         var grid = NewFormGrid();
 
         _printerBox.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -538,28 +606,41 @@ public sealed class Form1 : Form
         ConfigureLogoPercentBox(_logoXPercentBox, 0, 100, 75);
         ConfigureLogoPercentBox(_logoYPercentBox, 0, 100, 3.5m);
         ConfigureLogoPercentBox(_logoWidthPercentBox, 1, 60, 18);
+        SetTip(_printerBox, "Printer used for the main flightcase label.");
+        SetTip(_insideLabelPrinterBox, "Small-label printer used for item labels inside the case.");
+        SetTip(_productionLabelPrinterBox, "Printer used for production/client/job labels.");
+        SetTip(_productionLabelLeftMmBox, "Moves the printed production label text left or right. Negative values can clip on some printers.");
+        SetTip(_productionLabelTopMmBox, "Moves the printed production label text up or down.");
+        SetTip(_logoOverlayModeBox, "Use Numeric only when manually-set containers already include the logo, and numeric case labels need the overlay.");
+        SetTip(_logoXPercentBox, "Horizontal logo position as a percentage of the main label preview.");
+        SetTip(_logoYPercentBox, "Vertical logo position as a percentage of the main label preview.");
+        SetTip(_logoWidthPercentBox, "Logo size as a percentage of the main label width.");
 
+        AddSectionHeading(grid, "Flightcase labels");
         AddRow(grid, "Printer", _printerBox);
-        AddRow(grid, "Inside label printer", _insideLabelPrinterBox);
-        AddRow(grid, "Inside width mm", _insideLabelWidthMmBox);
-        AddRow(grid, "Inside height mm", _insideLabelHeightMmBox);
 
+        AddSectionHeading(grid, "Inside case labels");
+        AddRow(grid, "Printer", _insideLabelPrinterBox);
+        AddRow(grid, "Width (mm)", _insideLabelWidthMmBox);
+        AddRow(grid, "Height (mm)", _insideLabelHeightMmBox);
         grid.Controls.Add(_insideLabelLandscapeBox, 0, grid.RowCount);
         grid.SetColumnSpan(_insideLabelLandscapeBox, 2);
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         grid.RowCount++;
 
-        AddRow(grid, "Production label printer", _productionLabelPrinterBox);
-        AddRow(grid, "Production width mm", _productionLabelWidthMmBox);
-        AddRow(grid, "Production height mm", _productionLabelHeightMmBox);
-        AddRow(grid, "Production left mm", _productionLabelLeftMmBox);
-        AddRow(grid, "Production top mm", _productionLabelTopMmBox);
+        AddSectionHeading(grid, "Production labels");
+        AddRow(grid, "Printer", _productionLabelPrinterBox);
+        AddRow(grid, "Width (mm)", _productionLabelWidthMmBox);
+        AddRow(grid, "Height (mm)", _productionLabelHeightMmBox);
+        AddRow(grid, "Left offset (mm)", _productionLabelLeftMmBox);
+        AddRow(grid, "Top offset (mm)", _productionLabelTopMmBox);
 
         grid.Controls.Add(_productionLabelLandscapeBox, 0, grid.RowCount);
         grid.SetColumnSpan(_productionLabelLandscapeBox, 2);
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         grid.RowCount++;
 
+        AddSectionHeading(grid, "Logo overlay");
         AddRow(grid, "Logo overlay", _logoOverlayModeBox);
         AddRow(grid, "Logo image", _logoPathBox);
         AddRow(grid, "Logo X %", _logoXPercentBox);
@@ -614,6 +695,46 @@ public sealed class Form1 : Form
         return panel;
     }
 
+    private Control BuildUpdateNoticePanel()
+    {
+        _updateNoticePanel.Dock = DockStyle.Fill;
+        _updateNoticePanel.AutoSize = true;
+        _updateNoticePanel.Visible = false;
+        _updateNoticePanel.BackColor = Color.FromArgb(255, 246, 214);
+        _updateNoticePanel.Padding = new Padding(12, 8, 12, 8);
+        _updateNoticePanel.Margin = new Padding(0, 0, 0, 10);
+
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            ColumnCount = 3,
+            RowCount = 1
+        };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        _updateNoticeLabel.Dock = DockStyle.Fill;
+        _updateNoticeLabel.AutoSize = true;
+        _updateNoticeLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _updateNoticeLabel.Font = new Font("Segoe UI", 10.5F, FontStyle.Bold);
+        _updateNoticeLabel.ForeColor = Color.FromArgb(71, 55, 18);
+
+        ConfigureButton(_openUpdatePageButton, "Install Update", async () => await InstallAvailableUpdateAsync());
+        ConfigureButton(_hideUpdateNoticeButton, "Dismiss", () =>
+        {
+            _updateNoticeDismissed = true;
+            _updateNoticePanel.Visible = false;
+        });
+
+        layout.Controls.Add(_updateNoticeLabel, 0, 0);
+        layout.Controls.Add(_openUpdatePageButton, 1, 0);
+        layout.Controls.Add(_hideUpdateNoticeButton, 2, 0);
+        _updateNoticePanel.Controls.Add(layout);
+        return _updateNoticePanel;
+    }
+
     private async void OnLoad(object? sender, EventArgs e)
     {
         _settings = SettingsStore.Load();
@@ -628,6 +749,7 @@ public sealed class Form1 : Form
         _barcodeBox.Focus();
         Log($"Started. Log file: {SettingsStore.LogPath}");
         ConfigureAutoDownloadTimer();
+        _ = CheckForUpdatesInBackgroundAsync(showNoUpdateMessage: false);
         await Task.CompletedTask;
     }
 
@@ -1269,11 +1391,16 @@ public sealed class Form1 : Form
         return $"{opportunity.Id} {opportunity.DisplayText} [{opportunity.StateName}/{opportunity.StatusName}{dateText}]";
     }
 
-    private void PrintCurrentPreview()
+    private void PrintCurrentPreview(int copies)
     {
         if (_previewBitmap is null || _lastMatch is null)
         {
             throw new InvalidOperationException("Find a label before printing.");
+        }
+
+        if (copies <= 0)
+        {
+            throw new InvalidOperationException("Enter at least 1 flightcase label to print.");
         }
 
         if (string.IsNullOrWhiteSpace(_lastPreviewPdfPath) || !File.Exists(_lastPreviewPdfPath))
@@ -1286,8 +1413,13 @@ public sealed class Form1 : Form
         var printBitmap = ApplyLogoOverlayIfConfigured(_pdfLabelService.RenderPage(_lastPreviewPdfPath, _lastMatch, PrintRenderDpi));
         try
         {
-            _printService.PrintImage(printBitmap, printerName, jobName);
-            Log($"Sent to printer: {printerName} using {PrintRenderDpi} DPI render.");
+            for (var copy = 1; copy <= copies; copy++)
+            {
+                var copyJobName = copies == 1 ? jobName : $"{jobName} copy {copy} of {copies}";
+                _printService.PrintImage(printBitmap, printerName, copyJobName);
+            }
+
+            Log($"Sent {copies} flightcase label(s) to printer: {printerName} using {PrintRenderDpi} DPI render.");
         }
         finally
         {
@@ -1297,7 +1429,13 @@ public sealed class Form1 : Form
 
     private void PrintAndReset()
     {
-        PrintCurrentPreview();
+        PrintCurrentPreview((int)_flightcaseLabelQuantityBox.Value);
+        ResetForNextScan();
+    }
+
+    private void StillagePrintAndReset()
+    {
+        PrintCurrentPreview(2);
         ResetForNextScan();
     }
 
@@ -1477,6 +1615,7 @@ public sealed class Form1 : Form
         _previewBox.Image = _previewBitmap;
         _settingsPreviewBox.Image = _previewBitmap;
         _printButton.Enabled = true;
+        _stillagePrintButton.Enabled = true;
         _printInsideLabelsButton.Enabled = true;
         _printProductionLabelButton.Enabled = true;
     }
@@ -1492,6 +1631,7 @@ public sealed class Form1 : Form
         _previewBox.Image = null;
         _settingsPreviewBox.Image = null;
         _printButton.Enabled = false;
+        _stillagePrintButton.Enabled = false;
         _printInsideLabelsButton.Enabled = false;
         _printProductionLabelButton.Enabled = false;
         SetProgress(0, 0, "");
@@ -1526,9 +1666,10 @@ public sealed class Form1 : Form
     private void SetBusy(bool busy, string status)
     {
         _isBusy = busy;
-        foreach (var control in new Control[] { _saveButton, _testButton, _downloadPdfButton, _browsePdfButton, _browseLogoButton, _scanButton, _printButton, _printInsideLabelsButton, _printProductionLabelButton, _clearButton, _openLogButton, _showSettingsButton, _backToKioskButton })
+        foreach (var control in new Control[] { _saveButton, _testButton, _downloadPdfButton, _browsePdfButton, _browseLogoButton, _scanButton, _printButton, _stillagePrintButton, _printInsideLabelsButton, _printProductionLabelButton, _clearButton, _openLogButton, _checkUpdatesButton, _openUpdatePageButton, _hideUpdateNoticeButton, _showSettingsButton, _backToKioskButton })
         {
             var requiresPreview = control == _printButton ||
+                control == _stillagePrintButton ||
                 control == _printInsideLabelsButton ||
                 control == _printProductionLabelButton;
             control.Enabled = !busy && (!requiresPreview || _previewBitmap is not null);
@@ -1622,6 +1763,86 @@ public sealed class Form1 : Form
         }
     }
 
+    private async Task CheckForUpdatesInBackgroundAsync(bool showNoUpdateMessage)
+    {
+        var result = await _updateService.CheckForUpdateAsync();
+        Log(result.Message);
+
+        if (result.State is UpdateCheckState.Available or UpdateCheckState.PendingRestart)
+        {
+            ShowUpdateNotice(result);
+            return;
+        }
+
+        if (showNoUpdateMessage)
+        {
+            MessageBox.Show(this, result.Message, "Updates", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+    }
+
+    private void ShowUpdateNotice(UpdateCheckResult result)
+    {
+        _availableUpdate = result;
+        if (_updateNoticeDismissed && result.State != UpdateCheckState.PendingRestart)
+        {
+            return;
+        }
+
+        _updateNoticeLabel.Text = result.Message;
+        _openUpdatePageButton.Text = result.State == UpdateCheckState.PendingRestart
+            ? "Restart Now"
+            : "Install Update";
+        _updateNoticePanel.Visible = true;
+    }
+
+    private async Task InstallAvailableUpdateAsync()
+    {
+        var update = _availableUpdate;
+        if (update is null)
+        {
+            await CheckForUpdatesInBackgroundAsync(showNoUpdateMessage: true);
+            return;
+        }
+
+        if (update.PendingRestart is { } pendingRestart)
+        {
+            SaveSettingsFromForm();
+            _updateService.RestartToApply(pendingRestart);
+            return;
+        }
+
+        if (update.Update is null)
+        {
+            await CheckForUpdatesInBackgroundAsync(showNoUpdateMessage: true);
+            return;
+        }
+
+        await RunBusyAsync("Downloading update...", async () =>
+        {
+            _openUpdatePageButton.Enabled = false;
+            SaveSettingsFromForm();
+            await _updateService.DownloadAndRestartAsync(
+                update.Update,
+                percent =>
+                {
+                    if (IsDisposed)
+                    {
+                        return;
+                    }
+
+                    void SetUpdateProgress() => SetProgress(percent, 100, $"Downloading update {percent}%");
+                    if (InvokeRequired)
+                    {
+                        BeginInvoke((MethodInvoker)SetUpdateProgress);
+                    }
+                    else
+                    {
+                        SetUpdateProgress();
+                    }
+                });
+        });
+    }
+
     private void ShowSettingsPage()
     {
         _settingsClickCount = 0;
@@ -1669,10 +1890,23 @@ public sealed class Form1 : Form
         if (disposing)
         {
             _autoDownloadTimer.Dispose();
+            _toolTip.Dispose();
             _previewBitmap?.Dispose();
         }
 
         base.Dispose(disposing);
+    }
+
+    private static Label NewKioskActionLabel(string text)
+    {
+        return new Label
+        {
+            AutoSize = true,
+            Text = text,
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(65, 78, 86),
+            Padding = new Padding(0, 8, 0, 0)
+        };
     }
 
     private static GroupBox NewGroup(string title)
@@ -1699,6 +1933,24 @@ public sealed class Form1 : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         return grid;
+    }
+
+    private static void AddSectionHeading(TableLayoutPanel grid, string text)
+    {
+        var row = grid.RowCount++;
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        var label = new Label
+        {
+            AutoSize = true,
+            Text = text,
+            Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+            ForeColor = Color.FromArgb(20, 84, 112),
+            Padding = new Padding(0, 12, 0, 2)
+        };
+
+        grid.Controls.Add(label, 0, row);
+        grid.SetColumnSpan(label, 2);
     }
 
     private static FlowLayoutPanel NewButtonRow()
@@ -1766,6 +2018,11 @@ public sealed class Form1 : Form
     private static decimal ClampDecimal(decimal value, decimal minimum, decimal maximum)
     {
         return Math.Min(Math.Max(value, minimum), maximum);
+    }
+
+    private void SetTip(Control control, string text)
+    {
+        _toolTip.SetToolTip(control, text);
     }
 
     private string CurrentLogoOverlayMode()

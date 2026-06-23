@@ -48,6 +48,8 @@ let refreshIntervalSeconds = 30;
 let scannedPageNumbers = []; // Array to store page numbers for multi-print
 let multiPrintResults = []; // Matched barcode/page pairs for the latest multi-print run
 let barcodeSearchTimer = null;
+let notificationIdCounter = 0;
+const notificationTimers = new Map();
 
 // Utility function to set loading state on buttons
 function setLoading(button, isLoading) {
@@ -84,14 +86,117 @@ async function setStoredConfig(values) {
     return chrome.storage.local.set(values);
 }
 
-// Status message display
-function showStatus(message, type) {
-    statusMessages.textContent = message;
-    statusMessages.className = `status-message ${type}`;
+// Status notification display
+function showStatus(message, type = "info") {
+    if (!statusMessages) {
+        return;
+    }
+
+    ensureNotificationShell();
+
+    const list = statusMessages.querySelector(".notification-list");
+    const notificationId = `notification-${++notificationIdCounter}`;
+    const notification = document.createElement("div");
+    notification.id = notificationId;
+    notification.className = `status-message ${type}`;
+    notification.setAttribute("role", type === "error" ? "alert" : "status");
+
+    const messageText = document.createElement("span");
+    messageText.className = "notification-text";
+    messageText.textContent = message;
+
+    const confirmButton = document.createElement("button");
+    confirmButton.type = "button";
+    confirmButton.className = "notification-confirm";
+    confirmButton.textContent = "OK";
+    confirmButton.addEventListener("click", () => dismissNotification(notificationId));
+
+    notification.appendChild(messageText);
+    notification.appendChild(confirmButton);
+    list.appendChild(notification);
+
     statusMessages.style.display = "block";
-    setTimeout(() => {
-        statusMessages.style.display = "none";
-    }, 5000);
+    updateDismissAllVisibility();
+
+    if (list.children.length > 6) {
+        dismissNotification(list.firstElementChild.id);
+    }
+
+    const timer = setTimeout(() => dismissNotification(notificationId), 15000);
+    notificationTimers.set(notificationId, timer);
+}
+
+function ensureNotificationShell() {
+    if (statusMessages.querySelector(".notification-list")) {
+        return;
+    }
+
+    statusMessages.className = "notification-stack";
+    statusMessages.textContent = "";
+
+    const header = document.createElement("div");
+    header.className = "notification-header";
+
+    const title = document.createElement("span");
+    title.textContent = "Notifications";
+
+    const dismissAllButton = document.createElement("button");
+    dismissAllButton.type = "button";
+    dismissAllButton.id = "dismissAllNotificationsBtn";
+    dismissAllButton.className = "dismiss-all-notifications";
+    dismissAllButton.textContent = "Dismiss all notifications";
+    dismissAllButton.addEventListener("click", dismissAllNotifications);
+
+    const list = document.createElement("div");
+    list.className = "notification-list";
+
+    header.appendChild(title);
+    header.appendChild(dismissAllButton);
+    statusMessages.appendChild(header);
+    statusMessages.appendChild(list);
+}
+
+function dismissNotification(notificationId) {
+    const timer = notificationTimers.get(notificationId);
+    if (timer) {
+        clearTimeout(timer);
+        notificationTimers.delete(notificationId);
+    }
+
+    const notification = document.getElementById(notificationId);
+    if (notification) {
+        notification.remove();
+    }
+
+    updateDismissAllVisibility();
+}
+
+function dismissAllNotifications() {
+    for (const timer of notificationTimers.values()) {
+        clearTimeout(timer);
+    }
+    notificationTimers.clear();
+
+    const list = statusMessages?.querySelector(".notification-list");
+    if (list) {
+        list.textContent = "";
+    }
+
+    updateDismissAllVisibility();
+}
+
+function updateDismissAllVisibility() {
+    const list = statusMessages?.querySelector(".notification-list");
+    const header = statusMessages?.querySelector(".notification-header");
+    const hasNotifications = Boolean(list && list.children.length > 0);
+
+    if (header) {
+        header.style.display = hasNotifications ? "flex" : "none";
+    }
+
+    if (statusMessages) {
+        statusMessages.style.display = hasNotifications ? "block" : "none";
+    }
 }
 
 function updatePdfStatus(message, type) {

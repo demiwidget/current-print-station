@@ -9,6 +9,7 @@ obj/
 windows-print-station/bin/
 windows-print-station/obj/
 windows-print-station/*.user
+Releases/
 
 *.log
 *.tmp
