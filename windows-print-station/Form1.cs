@@ -101,6 +101,7 @@ public sealed class Form1 : Form
     public Form1()
     {
         Text = $"Current-RMS Print Station v{_updateService.CurrentVersionText}";
+        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? Icon;
         MinimumSize = new Size(1120, 760);
         Size = new Size(1240, 820);
         StartPosition = FormStartPosition.CenterScreen;

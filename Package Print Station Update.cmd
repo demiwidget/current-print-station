@@ -44,7 +44,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-"%VPK_EXE%" pack -u CurrentRmsPrintStation -v "%VERSION%" -p "%BUILD_DIR%" -e CurrentRmsPrintStation.exe -o "%RELEASE_DIR%" --packTitle "Current-RMS Print Station" --packAuthors "Limelite Lighting"
+"%VPK_EXE%" pack -u CurrentRmsPrintStation -v "%VERSION%" -p "%BUILD_DIR%" -e CurrentRmsPrintStation.exe -o "%RELEASE_DIR%" --packTitle "Current-RMS Print Station" --packAuthors "Limelite Lighting" --icon "%~dp0windows-print-station\app.ico"
 if errorlevel 1 (
   pause
   exit /b 1
