@@ -61,6 +61,7 @@ public sealed class Form1 : Form
     private readonly Button _printInsideLabelsButton = new();
     private readonly Button _printProductionLabelButton = new();
     private readonly Button _clearButton = new();
+    private readonly Button _refreshPdfsButton = new();
     private readonly Button _openLogButton = new();
     private readonly Button _checkUpdatesButton = new();
     private readonly Button _openUpdatePageButton = new();
@@ -265,6 +266,7 @@ public sealed class Form1 : Form
         ConfigureQuantityBox(_flightcaseLabelQuantityBox, 1, 999, 1);
         ConfigureQuantityBox(_productionLabelQuantityBox, 1, 999, 1);
         ConfigureButton(_scanButton, "Find / Preview", async () => await ProcessScanAsync());
+        ConfigureButton(_refreshPdfsButton, "Refresh PDFs", async () => await ManualRefreshPdfsAsync());
         ConfigureButton(_printButton, "Print Flightcase Label", PrintAndReset);
         ConfigureButton(_stillagePrintButton, "Stillage Print (2)", StillagePrintAndReset);
         ConfigureButton(_clearButton, "Reset", ResetForNextScan);
@@ -273,6 +275,7 @@ public sealed class Form1 : Form
         _printInsideLabelsButton.Enabled = false;
         _printProductionLabelButton.Enabled = false;
         mainButtons.Controls.Add(_scanButton);
+        mainButtons.Controls.Add(_refreshPdfsButton);
         mainButtons.Controls.Add(_printButton);
         mainButtons.Controls.Add(new Label
         {
@@ -1153,35 +1156,7 @@ public sealed class Form1 : Form
         _isAutoDownloading = true;
         try
         {
-            Log("Auto-download started.");
-            var opportunities = await LoadLookupViewOpportunitiesAsync(viewId);
-            var candidates = FilterOpportunitiesByDate(opportunities, (int)_lookupDaysAheadBox.Value).ToList();
-            if (candidates.Count == 0)
-            {
-                candidates = opportunities.ToList();
-            }
-
-            var downloaded = 0;
-            foreach (var opportunity in candidates)
-            {
-                if (_isBusy)
-                {
-                    Log("Auto-download stopped because a scan started.");
-                    return;
-                }
-
-                try
-                {
-                    await DownloadOpportunityPdfAsync(opportunity.Id);
-                    downloaded++;
-                }
-                catch (Exception ex)
-                {
-                    Log($"Auto-download skipped {opportunity.Id} {opportunity.DisplayText}: {ex.Message}");
-                }
-            }
-
-            Log($"Auto-download complete: {downloaded}/{candidates.Count} PDFs cached.");
+            await RefreshCurrentJobPdfsAsync(viewId, "Auto-download", stopIfScanStarts: true);
         }
         catch (Exception ex)
         {
@@ -1190,8 +1165,70 @@ public sealed class Form1 : Form
         finally
         {
             _isAutoDownloading = false;
+            SetProgress(0, 0, "");
             ConfigureAutoDownloadTimer();
         }
+    }
+
+    private async Task ManualRefreshPdfsAsync()
+    {
+        await RunBusyAsync("Refreshing current job PDFs...", async () =>
+        {
+            var viewId = _lookupViewIdBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(viewId))
+            {
+                throw new InvalidOperationException("Set a Current view ID before refreshing PDFs.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_subdomainBox.Text.Trim()) ||
+                string.IsNullOrWhiteSpace(_apiKeyBox.Text.Trim()) ||
+                string.IsNullOrWhiteSpace(_documentIdBox.Text.Trim()))
+            {
+                throw new InvalidOperationException("Enter the Current-RMS subdomain, API key, and label document ID before refreshing PDFs.");
+            }
+
+            await RefreshCurrentJobPdfsAsync(viewId, "Manual refresh", stopIfScanStarts: false);
+        });
+    }
+
+    private async Task RefreshCurrentJobPdfsAsync(string viewId, string label, bool stopIfScanStarts)
+    {
+        Log($"{label} started.");
+        var opportunities = await LoadLookupViewOpportunitiesAsync(viewId);
+        var candidates = FilterOpportunitiesByDate(opportunities, (int)_lookupDaysAheadBox.Value).ToList();
+        if (candidates.Count == 0)
+        {
+            candidates = opportunities.ToList();
+        }
+
+        SetProgress(0, candidates.Count, $"{label}: 0 of {candidates.Count}");
+        var downloaded = 0;
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            if (stopIfScanStarts && _isBusy)
+            {
+                Log($"{label} stopped because a scan started.");
+                return;
+            }
+
+            var opportunity = candidates[index];
+            SetStatus($"{label}: {opportunity.Number}...");
+            SetProgress(index, candidates.Count, $"{label}: {index + 1} of {candidates.Count}");
+            try
+            {
+                await DownloadOpportunityPdfAsync(opportunity.Id);
+                downloaded++;
+            }
+            catch (Exception ex)
+            {
+                Log($"{label} skipped {opportunity.Id} {opportunity.DisplayText}: {ex.Message}");
+            }
+
+            SetProgress(index + 1, candidates.Count, $"{label}: {index + 1} of {candidates.Count}");
+            Application.DoEvents();
+        }
+
+        Log($"{label} complete: {downloaded}/{candidates.Count} PDFs cached.");
     }
 
     private string? SelectPdfMatch(string barcode, string viewId, List<ViewPdfMatch> matches)
@@ -1667,7 +1704,7 @@ public sealed class Form1 : Form
     private void SetBusy(bool busy, string status)
     {
         _isBusy = busy;
-        foreach (var control in new Control[] { _saveButton, _testButton, _downloadPdfButton, _browsePdfButton, _browseLogoButton, _scanButton, _printButton, _stillagePrintButton, _printInsideLabelsButton, _printProductionLabelButton, _clearButton, _openLogButton, _checkUpdatesButton, _openUpdatePageButton, _hideUpdateNoticeButton, _showSettingsButton, _backToKioskButton })
+        foreach (var control in new Control[] { _saveButton, _testButton, _downloadPdfButton, _browsePdfButton, _browseLogoButton, _scanButton, _refreshPdfsButton, _printButton, _stillagePrintButton, _printInsideLabelsButton, _printProductionLabelButton, _clearButton, _openLogButton, _checkUpdatesButton, _openUpdatePageButton, _hideUpdateNoticeButton, _showSettingsButton, _backToKioskButton })
         {
             var requiresPreview = control == _printButton ||
                 control == _stillagePrintButton ||

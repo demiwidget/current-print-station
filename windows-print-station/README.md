@@ -81,6 +81,7 @@ Upload those files to a GitHub Release tagged with the same app version, for exa
 - Select a `Production label printer` for production/client/job labels. After a case label is previewed, set `Prod qty` and use `Print Production Label` to print labels formatted as production, italic client, and bold job number.
 - Set `Production width mm`, `Production height mm`, and `Production labels landscape` to match the production label stock. Use `Production left mm` and `Production top mm` to nudge the text on the physical label if the printer driver offsets it.
 - On the kiosk screen, leave `Print when the same case is scanned again` ticked for two-scan printing. Untick it to preview first and print with the button.
+- Use `Refresh PDFs` on the kiosk screen to manually refresh the current job list and re-download the label PDFs immediately.
 - Set `Flightcase quantity` before using `Print Flightcase Label` if you need more than one main case label. Use `Stillage Print (2)` as a shortcut for printing exactly two main labels.
 - To open settings from the kiosk screen, click the `Label Print Station` title five times.
 - Leave `Find active opportunity from scanned case` ticked for live use.
