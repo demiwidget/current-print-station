@@ -11,6 +11,15 @@ windows-print-station/obj/
 windows-print-station/*.user
 Releases/
 
+# Local print-station settings and exported credentials must never be committed.
+settings.json
+appsettings*.json
+*credentials*
+*secrets*
+*.env
+.env*
+CurrentRmsPrintStation/
+
 *.log
 *.tmp
 *.cache

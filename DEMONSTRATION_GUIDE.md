@@ -108,17 +108,13 @@ Within the extension popup, you will find two input fields: one for your Current
 1.  **Subdomain**: Enter your Current-RMS subdomain. This is the first part of your Current-RMS URL, before `.current-rms.com`. For example, if your Current-RMS URL is `mycompany.current-rms.com`, you should enter `mycompany` into the subdomain field.
 2.  **API Key**: Enter your Current-RMS API key. This key is a unique identifier that authenticates your requests to the Current-RMS API. You can typically find or generate your API key within your Current-RMS account settings, usually under a section like "API" or "Integrations."
 
-**Screenshot 5: Entering Subdomain and API Key**
-
-![Entering Subdomain and API Key](screenshots/05-enter-credentials.webp)
+Do not place real subdomains, API keys, exported settings files, browser storage dumps, or screenshots of populated credential fields in this repository.
 
 ### Step 3: Save Configuration
 
 Once you have entered both your subdomain and API key, click the "Save Configuration" button. The extension will securely store these credentials locally on your device using Chrome's `chrome.storage.local` API. This ensures that your sensitive information is not exposed and persists across browser sessions.
 
-**Screenshot 6: Saving Configuration**
-
-![Saving Configuration](screenshots/06-save-configuration.webp)
+These values are stored locally on the operator's PC and should stay outside git.
 
 ### Step 4: Test Connection
 
@@ -126,13 +122,7 @@ After saving your configuration, it is highly recommended to test the connection
 
 Click the "Test Connection" button. The extension will attempt to make a simple API request to Current-RMS using your saved credentials. A success message will be displayed if the connection is established, or an error message will indicate any issues, such as incorrect credentials or network problems.
 
-**Screenshot 7: Testing Connection (Success)**
-
-![Testing Connection (Success)](screenshots/07-test-connection-success.webp)
-
-**Screenshot 8: Testing Connection (Failure)**
-
-![Testing Connection (Failure)](screenshots/08-test-connection-failure.webp)
+Avoid sharing screenshots of the connection test screen if they show a populated subdomain or API key field.
 
 Upon successful configuration, the extension is ready for use. The next section will detail the basic workflow for utilizing the extension to print flightcase labels.
 
