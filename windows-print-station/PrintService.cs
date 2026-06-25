@@ -278,13 +278,7 @@ public sealed class PrintService
         }
 
         var fontSize = CreateFittingProductionFontSize(graphics, lines, bounds);
-        using var format = new StringFormat
-        {
-            Alignment = StringAlignment.Near,
-            LineAlignment = StringAlignment.Near,
-            Trimming = StringTrimming.None,
-            FormatFlags = StringFormatFlags.NoClip
-        };
+        using var format = CreateProductionStringFormat();
         using var brush = new SolidBrush(Color.Black);
 
         var measuredLines = MeasureProductionLines(graphics, lines, fontSize, bounds.Width, format);
@@ -301,15 +295,19 @@ public sealed class PrintService
         }
     }
 
+    private static StringFormat CreateProductionStringFormat()
+    {
+        var format = (StringFormat)StringFormat.GenericTypographic.Clone();
+        format.Alignment = StringAlignment.Near;
+        format.LineAlignment = StringAlignment.Near;
+        format.Trimming = StringTrimming.None;
+        format.FormatFlags |= StringFormatFlags.NoClip | StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
+        return format;
+    }
+
     private static float CreateFittingProductionFontSize(Graphics graphics, IReadOnlyList<ProductionLineRequest> lines, RectangleF bounds)
     {
-        using var format = new StringFormat
-        {
-            Alignment = StringAlignment.Near,
-            LineAlignment = StringAlignment.Near,
-            Trimming = StringTrimming.None,
-            FormatFlags = StringFormatFlags.NoClip
-        };
+        using var format = CreateProductionStringFormat();
 
         for (var size = 22f; size >= 5f; size -= 0.5f)
         {
@@ -330,7 +328,7 @@ public sealed class PrintService
         return new[]
             {
                 new ProductionLineRequest(label.Production.Trim(), FontStyle.Regular),
-                new ProductionLineRequest($" {label.Client.Trim()}", FontStyle.Italic),
+                new ProductionLineRequest(label.Client.Trim(), FontStyle.Italic),
                 new ProductionLineRequest(label.JobNumber.Trim(), FontStyle.Bold)
             }
             .Where(line => !string.IsNullOrWhiteSpace(line.Text))
