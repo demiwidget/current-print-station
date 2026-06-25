@@ -90,6 +90,7 @@ public sealed class Form1 : Form
     private string _lastPreviewPdfPath = "";
     private string _lastOpportunityNumber = "";
     private string _lastOpportunitySubject = "";
+    private string _lastOpportunityClient = "";
     private bool _syncingPrintMode;
     private bool _isBusy;
     private bool _isAutoDownloading;
@@ -298,7 +299,7 @@ public sealed class Form1 : Form
 
         var extraButtons = NewButtonRow();
         ConfigureButton(_printInsideLabelsButton, "Print Inside Case Labels", PrintInsideLabels);
-        ConfigureButton(_printProductionLabelButton, "Print Production Labels", PrintProductionLabels);
+        ConfigureButton(_printProductionLabelButton, "Print Production Labels", async () => await PrintProductionLabelsAsync());
         extraButtons.Controls.Add(_printInsideLabelsButton);
         extraButtons.Controls.Add(_printProductionLabelButton);
         extraButtons.Controls.Add(new Label
@@ -1241,6 +1242,7 @@ public sealed class Form1 : Form
             _opportunityIdBox.Text = selected.Opportunity.Id;
             _lastOpportunityNumber = selected.Opportunity.Number;
             _lastOpportunitySubject = selected.Opportunity.Subject;
+            _lastOpportunityClient = selected.Opportunity.ClientName;
             _localPdfBox.Text = selected.PdfPath;
             Log($"Automatically selected opportunity: {DescribeOpportunity(selected.Opportunity)}");
             Log($"PDF cached for selected opportunity {selected.Opportunity.Id}: {selected.PdfPath}");
@@ -1267,6 +1269,7 @@ public sealed class Form1 : Form
         _opportunityIdBox.Text = selectedMatch.Opportunity.Id;
         _lastOpportunityNumber = selectedMatch.Opportunity.Number;
         _lastOpportunitySubject = selectedMatch.Opportunity.Subject;
+        _lastOpportunityClient = selectedMatch.Opportunity.ClientName;
         _localPdfBox.Text = selectedMatch.PdfPath;
         Log($"PDF cached for selected opportunity {selectedMatch.Opportunity.Id}: {selectedMatch.PdfPath}");
         return selectedMatch.PdfPath;
@@ -1517,7 +1520,7 @@ public sealed class Form1 : Form
         Log($"Sent {labels.Count} inside label(s) to printer: {printerName}");
     }
 
-    private void PrintProductionLabels()
+    private async Task PrintProductionLabelsAsync()
     {
         if (_lastMatch is null || string.IsNullOrWhiteSpace(_lastPreviewPdfPath))
         {
@@ -1530,22 +1533,8 @@ public sealed class Form1 : Form
             throw new InvalidOperationException("Choose a production label printer in Settings.");
         }
 
-        var label = _pdfLabelService.ExtractProductionLabelContent(_lastPreviewPdfPath, _lastMatch);
-        var missing = new List<string>();
-        if (string.IsNullOrWhiteSpace(label.Production))
-        {
-            missing.Add("Production");
-        }
-
-        if (string.IsNullOrWhiteSpace(label.Client))
-        {
-            missing.Add("Client");
-        }
-
-        if (string.IsNullOrWhiteSpace(label.JobNumber))
-        {
-            missing.Add("JOB NUMBER");
-        }
+        var label = await ReadProductionLabelContentAsync();
+        var missing = MissingProductionLabelFields(label);
 
         if (missing.Count > 0)
         {
@@ -1576,6 +1565,88 @@ public sealed class Form1 : Form
         Log($"Sent {quantity} production label(s) to printer: {printerName} ({label.Production} / {label.Client} / {label.JobNumber})");
     }
 
+    private async Task<ProductionLabelContent> ReadProductionLabelContentAsync()
+    {
+        var label = new ProductionLabelContent("", "", "");
+        var opportunityId = _opportunityIdBox.Text.Trim();
+
+        if (!string.IsNullOrWhiteSpace(opportunityId) &&
+            !string.IsNullOrWhiteSpace(_subdomainBox.Text) &&
+            !string.IsNullOrWhiteSpace(_apiKeyBox.Text))
+        {
+            try
+            {
+                var apiLabel = await _currentRmsClient.GetProductionLabelContentAsync(
+                    _subdomainBox.Text.Trim(),
+                    _apiKeyBox.Text.Trim(),
+                    opportunityId);
+                label = MergeProductionLabelContent(label, apiLabel);
+                if (HasAnyProductionLabelField(apiLabel))
+                {
+                    Log($"Production label details loaded from Current-RMS opportunity {opportunityId}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Could not load production label details from Current-RMS: {ex.Message}");
+            }
+        }
+
+        if (MissingProductionLabelFields(label).Count > 0)
+        {
+            try
+            {
+                var pdfLabel = _pdfLabelService.ExtractProductionLabelContent(_lastPreviewPdfPath, _lastMatch!);
+                label = MergeProductionLabelContent(label, pdfLabel);
+                Log("Production label details checked against the PDF label fallback.");
+            }
+            catch (Exception ex)
+            {
+                Log($"Could not read production label details from the PDF: {ex.Message}");
+            }
+        }
+
+        return label;
+    }
+
+    private static ProductionLabelContent MergeProductionLabelContent(
+        ProductionLabelContent primary,
+        ProductionLabelContent fallback)
+    {
+        return new ProductionLabelContent(
+            string.IsNullOrWhiteSpace(primary.Production) ? fallback.Production : primary.Production,
+            string.IsNullOrWhiteSpace(primary.Client) ? fallback.Client : primary.Client,
+            string.IsNullOrWhiteSpace(primary.JobNumber) ? fallback.JobNumber : primary.JobNumber);
+    }
+
+    private static bool HasAnyProductionLabelField(ProductionLabelContent label)
+    {
+        return !string.IsNullOrWhiteSpace(label.Production) ||
+               !string.IsNullOrWhiteSpace(label.Client) ||
+               !string.IsNullOrWhiteSpace(label.JobNumber);
+    }
+
+    private static IReadOnlyList<string> MissingProductionLabelFields(ProductionLabelContent label)
+    {
+        var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(label.Production))
+        {
+            missing.Add("Production");
+        }
+
+        if (string.IsNullOrWhiteSpace(label.Client))
+        {
+            missing.Add("Client");
+        }
+
+        if (string.IsNullOrWhiteSpace(label.JobNumber))
+        {
+            missing.Add("JOB NUMBER");
+        }
+
+        return missing;
+    }
+
     private ProductionLabelFallbackResult ApplyProductionLabelFallbacks(ProductionLabelContent label)
     {
         var production = label.Production;
@@ -1590,6 +1661,11 @@ public sealed class Form1 : Form
         if (string.IsNullOrWhiteSpace(production) && !string.IsNullOrWhiteSpace(_lastOpportunitySubject))
         {
             production = _lastOpportunitySubject.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(client) && !string.IsNullOrWhiteSpace(_lastOpportunityClient))
+        {
+            client = _lastOpportunityClient.Trim();
         }
 
         var stillMissing = new List<string>();
@@ -1716,6 +1792,7 @@ public sealed class Form1 : Form
         _lastPreviewPdfPath = "";
         _lastOpportunityNumber = "";
         _lastOpportunitySubject = "";
+        _lastOpportunityClient = "";
         _previewBitmap?.Dispose();
         _previewBitmap = null;
         _previewBox.Image = null;

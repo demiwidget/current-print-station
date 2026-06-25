@@ -98,6 +98,47 @@ public sealed class CurrentRmsClient
             .ToList();
     }
 
+    public async Task<ProductionLabelContent> GetProductionLabelContentAsync(
+        string subdomain,
+        string apiKey,
+        string opportunityId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(opportunityId))
+        {
+            throw new InvalidOperationException("No Current-RMS opportunity is selected.");
+        }
+
+        var url = BuildApiUrl($"/opportunities/{Uri.EscapeDataString(opportunityId.Trim())}", []);
+        using var request = BuildJsonAuthRequest(url, subdomain, apiKey);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Opportunity detail lookup failed for {opportunityId}: {(int)response.StatusCode} {response.ReasonPhrase}. {TrimForDisplay(json)}");
+        }
+
+        using var document = JsonDocument.Parse(json);
+        if (!document.RootElement.TryGetProperty("opportunity", out var opportunity) ||
+            opportunity.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException($"Current-RMS did not return opportunity details for {opportunityId}.");
+        }
+
+        var jobNumber = ReadOptionalString(opportunity, "number");
+        var production = ReadOptionalString(opportunity, "subject");
+        var client = ReadClientName(opportunity);
+        var memberId = ReadOptionalString(opportunity, "member_id");
+
+        if (string.IsNullOrWhiteSpace(client) && !string.IsNullOrWhiteSpace(memberId))
+        {
+            client = await GetMemberNameAsync(subdomain, apiKey, memberId, cancellationToken);
+        }
+
+        return new ProductionLabelContent(production, client, jobNumber);
+    }
+
     public async Task<OpportunityLookupResult?> FindOpportunityForScanAsync(
         string subdomain,
         string apiKey,
@@ -336,6 +377,32 @@ public sealed class CurrentRmsClient
         };
     }
 
+    private async Task<string> GetMemberNameAsync(
+        string subdomain,
+        string apiKey,
+        string memberId,
+        CancellationToken cancellationToken)
+    {
+        var url = BuildApiUrl($"/members/{Uri.EscapeDataString(memberId.Trim())}", []);
+        using var request = BuildJsonAuthRequest(url, subdomain, apiKey);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Member lookup failed for {memberId}: {(int)response.StatusCode} {response.ReasonPhrase}. {TrimForDisplay(json)}");
+        }
+
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.TryGetProperty("member", out var member) &&
+            member.ValueKind == JsonValueKind.Object)
+        {
+            return ReadClientName(member);
+        }
+
+        return ReadClientName(document.RootElement);
+    }
+
     private async Task<byte[]> TryDownloadPdfAsync(string pdfUrl, string subdomain, string apiKey, CancellationToken cancellationToken)
     {
         var attempts = new[]
@@ -427,7 +494,8 @@ public sealed class CurrentRmsClient
         var queryString = string.Join(
             "&",
             query.Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
-        return $"https://api.current-rms.com/api/v1{path}?{queryString}";
+        var baseUrl = $"https://api.current-rms.com/api/v1{path}";
+        return string.IsNullOrWhiteSpace(queryString) ? baseUrl : $"{baseUrl}?{queryString}";
     }
 
     private static IEnumerable<KeyValuePair<string, string>> BuildOpportunityQuery(
@@ -473,6 +541,8 @@ public sealed class CurrentRmsClient
             ReadRequiredString(opportunity, "id"),
             ReadOptionalString(opportunity, "number"),
             ReadOptionalString(opportunity, "subject"),
+            ReadOptionalString(opportunity, "member_id"),
+            ReadClientName(opportunity),
             matchSource,
             ReadOptionalString(opportunity, "state_name"),
             ReadOptionalString(opportunity, "status_name"),
@@ -481,6 +551,62 @@ public sealed class CurrentRmsClient
             ReadOptionalString(opportunity, "prep_starts_at"),
             ReadOptionalString(opportunity, "prep_ends_at"),
             FindMatchingAssetStatuses(opportunity, scanValue));
+    }
+
+    private static string ReadClientName(JsonElement element)
+    {
+        var direct = ReadFirstPresent(
+            element,
+            "member_name",
+            "customer_name",
+            "client_name",
+            "organisation_name",
+            "organization_name",
+            "company_name",
+            "account_name",
+            "display_name",
+            "full_name",
+            "name");
+
+        if (!string.IsNullOrWhiteSpace(direct))
+        {
+            return direct;
+        }
+
+        foreach (var nestedName in new[] { "member", "customer", "client", "organisation", "organization", "company", "identity" })
+        {
+            if (!element.TryGetProperty(nestedName, out var nested) ||
+                nested.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var nestedDirect = ReadFirstPresent(
+                nested,
+                "name",
+                "display_name",
+                "company_name",
+                "organisation_name",
+                "organization_name",
+                "full_name");
+            if (!string.IsNullOrWhiteSpace(nestedDirect))
+            {
+                return nestedDirect;
+            }
+
+            var nestedPerson = JoinName(ReadOptionalString(nested, "first_name"), ReadOptionalString(nested, "last_name"));
+            if (!string.IsNullOrWhiteSpace(nestedPerson))
+            {
+                return nestedPerson;
+            }
+        }
+
+        return JoinName(ReadOptionalString(element, "first_name"), ReadOptionalString(element, "last_name"));
+    }
+
+    private static string JoinName(string firstName, string lastName)
+    {
+        return $"{firstName} {lastName}".Trim();
     }
 
     private static OpportunityLookupResult? SelectPreparedOpportunity(IReadOnlyList<OpportunityLookupResult> matches)
@@ -748,6 +874,8 @@ public sealed record OpportunityLookupResult(
     string Id,
     string Number,
     string Subject,
+    string MemberId,
+    string ClientName,
     string MatchSource,
     string StateName,
     string StatusName,
