@@ -88,6 +88,8 @@ public sealed class Form1 : Form
     private Bitmap? _previewBitmap;
     private LabelMatch? _lastMatch;
     private string _lastPreviewPdfPath = "";
+    private string _lastOpportunityNumber = "";
+    private string _lastOpportunitySubject = "";
     private bool _syncingPrintMode;
     private bool _isBusy;
     private bool _isAutoDownloading;
@@ -1237,6 +1239,8 @@ public sealed class Form1 : Form
         {
             var selected = matches[0];
             _opportunityIdBox.Text = selected.Opportunity.Id;
+            _lastOpportunityNumber = selected.Opportunity.Number;
+            _lastOpportunitySubject = selected.Opportunity.Subject;
             _localPdfBox.Text = selected.PdfPath;
             Log($"Automatically selected opportunity: {DescribeOpportunity(selected.Opportunity)}");
             Log($"PDF cached for selected opportunity {selected.Opportunity.Id}: {selected.PdfPath}");
@@ -1261,6 +1265,8 @@ public sealed class Form1 : Form
         Log($"Selected opportunity: {DescribeOpportunity(selectedMatch.Opportunity)}");
 
         _opportunityIdBox.Text = selectedMatch.Opportunity.Id;
+        _lastOpportunityNumber = selectedMatch.Opportunity.Number;
+        _lastOpportunitySubject = selectedMatch.Opportunity.Subject;
         _localPdfBox.Text = selectedMatch.PdfPath;
         Log($"PDF cached for selected opportunity {selectedMatch.Opportunity.Id}: {selectedMatch.PdfPath}");
         return selectedMatch.PdfPath;
@@ -1543,7 +1549,16 @@ public sealed class Form1 : Form
 
         if (missing.Count > 0)
         {
-            throw new InvalidOperationException($"Could not read {string.Join(", ", missing)} from this label page.");
+            var fallback = ApplyProductionLabelFallbacks(label);
+            label = fallback.Label;
+            if (fallback.StillMissing.Count > 0)
+            {
+                Log($"Production label is missing {string.Join(", ", fallback.StillMissing)}; printing with available fields.");
+            }
+            else
+            {
+                Log($"Production label used job fallback for missing {string.Join(", ", missing)}.");
+            }
         }
 
         var quantity = (int)_productionLabelQuantityBox.Value;
@@ -1559,6 +1574,41 @@ public sealed class Form1 : Form
             _productionLabelTopMmBox.Value);
 
         Log($"Sent {quantity} production label(s) to printer: {printerName} ({label.Production} / {label.Client} / {label.JobNumber})");
+    }
+
+    private ProductionLabelFallbackResult ApplyProductionLabelFallbacks(ProductionLabelContent label)
+    {
+        var production = label.Production;
+        var client = label.Client;
+        var jobNumber = label.JobNumber;
+
+        if (string.IsNullOrWhiteSpace(jobNumber) && !string.IsNullOrWhiteSpace(_lastOpportunityNumber))
+        {
+            jobNumber = _lastOpportunityNumber.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(production) && !string.IsNullOrWhiteSpace(_lastOpportunitySubject))
+        {
+            production = _lastOpportunitySubject.Trim();
+        }
+
+        var stillMissing = new List<string>();
+        if (string.IsNullOrWhiteSpace(production))
+        {
+            stillMissing.Add("Production");
+        }
+
+        if (string.IsNullOrWhiteSpace(client))
+        {
+            stillMissing.Add("Client");
+        }
+
+        if (string.IsNullOrWhiteSpace(jobNumber))
+        {
+            stillMissing.Add("JOB NUMBER");
+        }
+
+        return new ProductionLabelFallbackResult(new ProductionLabelContent(production, client, jobNumber), stillMissing);
     }
 
     private Bitmap ApplyLogoOverlayIfConfigured(Bitmap labelBitmap)
@@ -1664,6 +1714,8 @@ public sealed class Form1 : Form
         _matchLabel.Text = "Ready to scan.";
         _lastMatch = null;
         _lastPreviewPdfPath = "";
+        _lastOpportunityNumber = "";
+        _lastOpportunitySubject = "";
         _previewBitmap?.Dispose();
         _previewBitmap = null;
         _previewBox.Image = null;
@@ -2162,4 +2214,6 @@ public sealed class Form1 : Form
     }
 
     private sealed record ViewPdfMatch(OpportunityLookupResult Opportunity, string PdfPath, int PageNumber);
+
+    private sealed record ProductionLabelFallbackResult(ProductionLabelContent Label, IReadOnlyList<string> StillMissing);
 }
