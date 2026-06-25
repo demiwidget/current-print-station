@@ -2115,22 +2115,50 @@ public sealed class Form1 : Form
         }
     }
 
-    private static void ConfigureButton(Button button, string text, Action action)
+    private void ConfigureButton(Button button, string text, Action action)
     {
         button.Text = text;
         button.AutoSize = true;
         button.MinimumSize = new Size(110, 34);
         button.Margin = new Padding(0, 0, 8, 0);
-        button.Click += (_, _) => action();
+        button.Click += (_, _) =>
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                ShowActionError(ex);
+            }
+        };
     }
 
-    private static void ConfigureButton(Button button, string text, Func<Task> action)
+    private void ConfigureButton(Button button, string text, Func<Task> action)
     {
         button.Text = text;
         button.AutoSize = true;
         button.MinimumSize = new Size(110, 34);
         button.Margin = new Padding(0, 0, 8, 0);
-        button.Click += async (_, _) => await action();
+        button.Click += async (_, _) =>
+        {
+            try
+            {
+                await action();
+            }
+            catch (Exception ex)
+            {
+                ShowActionError(ex);
+            }
+        };
+    }
+
+    private void ShowActionError(Exception exception)
+    {
+        SetStatus("Error.");
+        LogException(exception);
+        MessageBox.Show(this, exception.Message, "Print station", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        _barcodeBox.Focus();
     }
 
     private sealed record ViewPdfMatch(OpportunityLookupResult Opportunity, string PdfPath, int PageNumber);

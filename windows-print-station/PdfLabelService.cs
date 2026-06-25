@@ -167,9 +167,20 @@ public sealed class PdfLabelService
         var page = document.GetPage(match.PageNumber);
         var words = page.GetWords().ToList();
 
+        var pageText = page.Text ?? "";
         var production = ReadValueBelowLabel(words, "Production:", "Client:", page.Width);
         var client = ReadValueBelowLabel(words, "Client:", "JOB", page.Width);
-        var jobNumber = ReadJobNumber(words, page.Text ?? "");
+        var jobNumber = ReadJobNumber(words, pageText);
+
+        if (string.IsNullOrWhiteSpace(production))
+        {
+            production = ReadValueFromTextLines(pageText, "Production", "Client");
+        }
+
+        if (string.IsNullOrWhiteSpace(client))
+        {
+            client = ReadValueFromTextLines(pageText, "Client", "JOB");
+        }
 
         if (string.IsNullOrWhiteSpace(production) &&
             string.IsNullOrWhiteSpace(client) &&
@@ -183,13 +194,13 @@ public sealed class PdfLabelService
 
     private static string ReadValueBelowLabel(IReadOnlyList<Word> words, string labelText, string nextLabelText, double pageWidth)
     {
-        var label = FindWord(words, labelText);
+        var label = FindLabelWord(words, labelText);
         if (label is null)
         {
             return "";
         }
 
-        var nextLabel = FindWord(words, nextLabelText);
+        var nextLabel = FindLabelWord(words, nextLabelText);
         var topLimit = label.BoundingBox.Bottom - 2;
         var bottomLimit = nextLabel is null
             ? label.BoundingBox.Bottom - 55
@@ -211,7 +222,7 @@ public sealed class PdfLabelService
 
     private static string ReadJobNumber(IReadOnlyList<Word> words, string pageText)
     {
-        var numberLabel = FindWord(words, "NUMBER:");
+        var numberLabel = FindLabelWord(words, "NUMBER:");
         if (numberLabel is not null)
         {
             var rowTolerance = 5d;
@@ -234,9 +245,42 @@ public sealed class PdfLabelService
         return match.Success ? match.Value.ToUpperInvariant() : "";
     }
 
-    private static Word? FindWord(IReadOnlyList<Word> words, string text)
+    private static Word? FindLabelWord(IReadOnlyList<Word> words, string text)
     {
-        return words.FirstOrDefault(word => word.Text.Trim().Equals(text, StringComparison.OrdinalIgnoreCase));
+        var normalized = Normalize(text);
+        return words.FirstOrDefault(word => Normalize(word.Text).Equals(normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ReadValueFromTextLines(string pageText, string label, string nextLabel)
+    {
+        var lines = Regex
+            .Split(pageText ?? "", @"\r?\n")
+            .Select(line => Regex.Replace(line.Trim(), @"\s+", " "))
+            .Where(line => line.Length > 0)
+            .ToList();
+
+        var labelIndex = lines.FindIndex(line => LineStartsWithLabel(line, label));
+        if (labelIndex < 0)
+        {
+            return "";
+        }
+
+        var sameLine = Regex
+            .Replace(lines[labelIndex], $"^{Regex.Escape(label)}\\s*:?\\s*", "", RegexOptions.IgnoreCase)
+            .Trim();
+        if (!string.IsNullOrWhiteSpace(sameLine))
+        {
+            return sameLine;
+        }
+
+        var nextIndex = lines.FindIndex(labelIndex + 1, line => LineStartsWithLabel(line, nextLabel));
+        var limit = nextIndex < 0 ? Math.Min(lines.Count, labelIndex + 3) : nextIndex;
+        return string.Join(" ", lines.Skip(labelIndex + 1).Take(limit - labelIndex - 1)).Trim();
+    }
+
+    private static bool LineStartsWithLabel(string line, string label)
+    {
+        return Regex.IsMatch(line ?? "", $"^{Regex.Escape(label)}\\s*:?", RegexOptions.IgnoreCase);
     }
 
     private static bool LooksLikeFooterOrBarcode(string value)
