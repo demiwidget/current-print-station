@@ -32,6 +32,7 @@ public sealed class AppSettings
     public string RequiredOpportunityTag { get; set; } = "";
     public bool PreviewBeforePrint { get; set; }
     public bool PrintOnSecondScan { get; set; } = true;
+    public bool PrintInsideLabelsWithFlightcase { get; set; }
     public string LastPdfPath { get; set; } = "";
     public bool OverlayLogo { get; set; }
     public string LogoOverlayMode { get; set; } = "Numeric only";

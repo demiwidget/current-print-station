@@ -79,6 +79,7 @@ public sealed class Form1 : Form
     private readonly PictureBox _settingsPreviewBox = new();
     private readonly TextBox _instructionBox = new();
     private readonly CheckBox _printOnSecondScanBox = new();
+    private readonly CheckBox _printInsideLabelsWithFlightcaseBox = new();
     private readonly Panel _updateNoticePanel = new();
     private readonly Panel _kioskPage = new();
     private readonly Panel _settingsPage = new();
@@ -95,6 +96,7 @@ public sealed class Form1 : Form
     private bool _isBusy;
     private bool _isAutoDownloading;
     private bool _updateNoticeDismissed;
+    private bool _loadingSettings;
     private int _settingsClickCount;
     private DateTime _settingsClickStartedAt = DateTime.MinValue;
     private readonly System.Windows.Forms.Timer _autoDownloadTimer = new();
@@ -290,6 +292,21 @@ public sealed class Form1 : Form
         mainButtons.Controls.Add(_stillagePrintButton);
         mainButtons.Controls.Add(_clearButton);
         actionsPanel.Controls.Add(mainButtons, 0, actionsPanel.RowCount);
+        actionsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        actionsPanel.RowCount++;
+
+        _printInsideLabelsWithFlightcaseBox.Text = "Also print inside case labels when printing the flightcase label";
+        _printInsideLabelsWithFlightcaseBox.AutoSize = true;
+        _printInsideLabelsWithFlightcaseBox.Font = new Font("Segoe UI", 10.5F);
+        _printInsideLabelsWithFlightcaseBox.Padding = new Padding(2, 8, 0, 0);
+        _printInsideLabelsWithFlightcaseBox.CheckedChanged += (_, _) =>
+        {
+            if (!_loadingSettings)
+            {
+                SaveSettingsFromForm();
+            }
+        };
+        actionsPanel.Controls.Add(_printInsideLabelsWithFlightcaseBox, 0, actionsPanel.RowCount);
         actionsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         actionsPanel.RowCount++;
 
@@ -745,8 +762,10 @@ public sealed class Form1 : Form
     private async void OnLoad(object? sender, EventArgs e)
     {
         _settings = SettingsStore.Load();
+        _loadingSettings = true;
         LoadSettingsIntoForm();
         LoadPrinters();
+        _loadingSettings = false;
 
         if (string.IsNullOrWhiteSpace(_settings.PrinterName) && _printerBox.Items.Count > 0)
         {
@@ -778,6 +797,7 @@ public sealed class Form1 : Form
         _previewBeforePrintBox.Checked = _settings.PreviewBeforePrint;
         _autoPrintBox.Checked = _settings.AutoPrint;
         _printOnSecondScanBox.Checked = _settings.PrintOnSecondScan;
+        _printInsideLabelsWithFlightcaseBox.Checked = _settings.PrintInsideLabelsWithFlightcase;
         _insideLabelWidthMmBox.Value = ClampDecimal(_settings.InsideLabelWidthMm, _insideLabelWidthMmBox.Minimum, _insideLabelWidthMmBox.Maximum);
         _insideLabelHeightMmBox.Value = ClampDecimal(_settings.InsideLabelHeightMm, _insideLabelHeightMmBox.Minimum, _insideLabelHeightMmBox.Maximum);
         _insideLabelLandscapeBox.Checked = _settings.InsideLabelLandscape;
@@ -873,6 +893,7 @@ public sealed class Form1 : Form
         _settings.RequiredOpportunityTag = _requiredTagBox.Text.Trim();
         _settings.PreviewBeforePrint = _previewBeforePrintBox.Checked;
         _settings.PrintOnSecondScan = _printOnSecondScanBox.Checked;
+        _settings.PrintInsideLabelsWithFlightcase = _printInsideLabelsWithFlightcaseBox.Checked;
         _settings.LogoOverlayMode = CurrentLogoOverlayMode();
         _settings.OverlayLogo = !_settings.LogoOverlayMode.Equals("Off", StringComparison.OrdinalIgnoreCase);
         _settings.LogoPath = _logoPathBox.Text.Trim();
@@ -1476,6 +1497,16 @@ public sealed class Form1 : Form
 
     private void PrintAndReset()
     {
+        if (_printInsideLabelsWithFlightcaseBox.Checked)
+        {
+            var insidePrinterName = GetInsideLabelPrinterName();
+            var insideLabels = ExtractInsideLabelTexts();
+            PrintCurrentPreview((int)_flightcaseLabelQuantityBox.Value);
+            PrintInsideLabelTexts(insideLabels, insidePrinterName);
+            ResetForNextScan();
+            return;
+        }
+
         PrintCurrentPreview((int)_flightcaseLabelQuantityBox.Value);
         ResetForNextScan();
     }
@@ -1488,6 +1519,11 @@ public sealed class Form1 : Form
 
     private void PrintInsideLabels()
     {
+        PrintInsideLabelTexts(ExtractInsideLabelTexts(), GetInsideLabelPrinterName());
+    }
+
+    private string GetInsideLabelPrinterName()
+    {
         if (_lastMatch is null || string.IsNullOrWhiteSpace(_lastPreviewPdfPath))
         {
             throw new InvalidOperationException("Find a label before printing inside labels.");
@@ -1497,6 +1533,16 @@ public sealed class Form1 : Form
         if (string.IsNullOrWhiteSpace(printerName))
         {
             throw new InvalidOperationException("Choose an inside label printer in Settings.");
+        }
+
+        return printerName;
+    }
+
+    private IReadOnlyList<string> ExtractInsideLabelTexts()
+    {
+        if (_lastMatch is null || string.IsNullOrWhiteSpace(_lastPreviewPdfPath))
+        {
+            throw new InvalidOperationException("Find a label before printing inside labels.");
         }
 
         var items = _pdfLabelService.ExtractContentItems(_lastPreviewPdfPath, _lastMatch);
@@ -1510,10 +1556,20 @@ public sealed class Form1 : Form
             .Where(text => !string.IsNullOrWhiteSpace(text))
             .ToList();
 
+        if (labels.Count == 0)
+        {
+            throw new InvalidOperationException("No inside label text was found on this label page.");
+        }
+
+        return labels;
+    }
+
+    private void PrintInsideLabelTexts(IReadOnlyList<string> labels, string printerName)
+    {
         _printService.PrintTextLabels(
             labels,
             printerName,
-            $"Inside labels {_lastMatch.Barcode}",
+            $"Inside labels {_lastMatch?.Barcode}",
             _insideLabelWidthMmBox.Value,
             _insideLabelHeightMmBox.Value,
             _insideLabelLandscapeBox.Checked);
