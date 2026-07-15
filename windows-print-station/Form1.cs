@@ -1481,12 +1481,7 @@ public sealed class Form1 : Form
         var printBitmap = ApplyLogoOverlayIfConfigured(_pdfLabelService.RenderPage(_lastPreviewPdfPath, _lastMatch, PrintRenderDpi));
         try
         {
-            for (var copy = 1; copy <= copies; copy++)
-            {
-                var copyJobName = copies == 1 ? jobName : $"{jobName} copy {copy} of {copies}";
-                _printService.PrintImage(printBitmap, printerName, copyJobName);
-            }
-
+            _printService.PrintImage(printBitmap, printerName, jobName, copies);
             Log($"Sent {copies} flightcase label(s) to printer: {printerName} using {PrintRenderDpi} DPI render.");
         }
         finally

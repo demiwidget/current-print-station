@@ -9,11 +9,16 @@ public sealed class PrintService
         return PrinterSettings.InstalledPrinters.Cast<string>().OrderBy(name => name).ToList();
     }
 
-    public void PrintImage(Image image, string printerName, string jobName)
+    public void PrintImage(Image image, string printerName, string jobName, int copies = 1)
     {
         if (string.IsNullOrWhiteSpace(printerName))
         {
             throw new InvalidOperationException("Choose a printer before printing.");
+        }
+
+        if (copies <= 0)
+        {
+            throw new InvalidOperationException("Enter at least 1 label to print.");
         }
 
         using var document = new PrintDocument
@@ -32,6 +37,7 @@ public sealed class PrintService
         document.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
         document.DefaultPageSettings.Landscape = image.Width > image.Height;
 
+        var pageIndex = 0;
         document.PrintPage += (_, e) =>
         {
             var graphics = e.Graphics ?? throw new InvalidOperationException("Windows did not provide a print graphics surface.");
@@ -43,7 +49,9 @@ public sealed class PrintService
 
             var target = FitImage(image.Size, e.PageBounds);
             graphics.DrawImage(image, target);
-            e.HasMorePages = false;
+
+            pageIndex++;
+            e.HasMorePages = pageIndex < copies;
         };
 
         document.Print();
@@ -67,10 +75,37 @@ public sealed class PrintService
             throw new InvalidOperationException("Choose an inside label printer before printing.");
         }
 
-        for (var index = 0; index < labels.Count; index++)
+        using var document = new PrintDocument
         {
-            PrintSingleTextLabel(labels[index], printerName, $"{jobName} {index + 1}", widthMm, heightMm, landscape);
+            DocumentName = jobName,
+            PrintController = new StandardPrintController(),
+            OriginAtMargins = false
+        };
+
+        document.PrinterSettings.PrinterName = printerName;
+        if (!document.PrinterSettings.IsValid)
+        {
+            throw new InvalidOperationException($"Printer '{printerName}' is not available.");
         }
+
+        document.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
+        document.DefaultPageSettings.PaperSize = new PaperSize(
+            "Inside Label",
+            MillimetresToHundredthsInch(widthMm),
+            MillimetresToHundredthsInch(heightMm));
+        document.DefaultPageSettings.Landscape = landscape;
+
+        var pageIndex = 0;
+        document.PrintPage += (_, e) =>
+        {
+            var graphics = e.Graphics ?? throw new InvalidOperationException("Windows did not provide a print graphics surface.");
+            DrawInsideLabel(graphics, labels[pageIndex], e.MarginBounds, e.PageBounds);
+
+            pageIndex++;
+            e.HasMorePages = pageIndex < labels.Count;
+        };
+
+        document.Print();
     }
 
     public void PrintProductionLabels(
@@ -94,83 +129,6 @@ public sealed class PrintService
             throw new InvalidOperationException("Choose a production label printer before printing.");
         }
 
-        for (var index = 0; index < quantity; index++)
-        {
-            PrintSingleProductionLabel(label, printerName, $"{jobName} {index + 1}", widthMm, heightMm, landscape, leftMm, topMm);
-        }
-    }
-
-    private void PrintSingleTextLabel(
-        string labelText,
-        string printerName,
-        string jobName,
-        decimal widthMm,
-        decimal heightMm,
-        bool landscape)
-    {
-        using var document = new PrintDocument
-        {
-            DocumentName = jobName,
-            PrintController = new StandardPrintController(),
-            OriginAtMargins = false
-        };
-
-        document.PrinterSettings.PrinterName = printerName;
-        if (!document.PrinterSettings.IsValid)
-        {
-            throw new InvalidOperationException($"Printer '{printerName}' is not available.");
-        }
-
-        document.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
-        document.DefaultPageSettings.PaperSize = new PaperSize(
-            "Inside Label",
-            MillimetresToHundredthsInch(widthMm),
-            MillimetresToHundredthsInch(heightMm));
-        document.DefaultPageSettings.Landscape = landscape;
-
-        document.PrintPage += (_, e) =>
-        {
-            var graphics = e.Graphics ?? throw new InvalidOperationException("Windows did not provide a print graphics surface.");
-            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-            graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
-
-            var bounds = Rectangle.Inflate(e.MarginBounds.Width > 0 && e.MarginBounds.Height > 0
-                ? e.MarginBounds
-                : e.PageBounds, -12, -10);
-            if (bounds.Width <= 0 || bounds.Height <= 0)
-            {
-                bounds = Rectangle.Inflate(e.PageBounds, -12, -10);
-            }
-
-            var text = labelText.Trim();
-            using var format = new StringFormat
-            {
-                Alignment = StringAlignment.Center,
-                LineAlignment = StringAlignment.Center,
-                Trimming = StringTrimming.None,
-                FormatFlags = StringFormatFlags.LineLimit
-            };
-
-            using var brush = new SolidBrush(Color.Black);
-            using var font = CreateFittingBoldFont(graphics, text, bounds, format);
-            graphics.DrawString(text, font, brush, bounds, format);
-
-            e.HasMorePages = false;
-        };
-
-        document.Print();
-    }
-
-    private void PrintSingleProductionLabel(
-        ProductionLabelContent label,
-        string printerName,
-        string jobName,
-        decimal widthMm,
-        decimal heightMm,
-        bool landscape,
-        decimal leftMm,
-        decimal topMm)
-    {
         using var document = new PrintDocument
         {
             DocumentName = jobName,
@@ -191,6 +149,7 @@ public sealed class PrintService
             MillimetresToHundredthsInch(heightMm));
         document.DefaultPageSettings.Landscape = landscape;
 
+        var pageIndex = 0;
         document.PrintPage += (_, e) =>
         {
             var graphics = e.Graphics ?? throw new InvalidOperationException("Windows did not provide a print graphics surface.");
@@ -213,7 +172,9 @@ public sealed class PrintService
                 bounds,
                 MillimetresToHundredthsInchOffset(leftMm),
                 MillimetresToHundredthsInchOffset(topMm));
-            e.HasMorePages = false;
+
+            pageIndex++;
+            e.HasMorePages = pageIndex < quantity;
         };
 
         document.Print();
@@ -227,6 +188,33 @@ public sealed class PrintService
     private static int MillimetresToHundredthsInchOffset(decimal millimetres)
     {
         return (int)Math.Round((double)millimetres / 25.4d * 100d);
+    }
+
+    private static void DrawInsideLabel(Graphics graphics, string labelText, Rectangle marginBounds, Rectangle pageBounds)
+    {
+        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
+
+        var bounds = Rectangle.Inflate(marginBounds.Width > 0 && marginBounds.Height > 0
+            ? marginBounds
+            : pageBounds, -12, -10);
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+        {
+            bounds = Rectangle.Inflate(pageBounds, -12, -10);
+        }
+
+        var text = labelText.Trim();
+        using var format = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.None,
+            FormatFlags = StringFormatFlags.LineLimit
+        };
+
+        using var brush = new SolidBrush(Color.Black);
+        using var font = CreateFittingBoldFont(graphics, text, bounds, format);
+        graphics.DrawString(text, font, brush, bounds, format);
     }
 
     private static Font CreateFittingBoldFont(Graphics graphics, string text, Rectangle bounds, StringFormat format)
