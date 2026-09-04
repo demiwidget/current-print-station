@@ -8,6 +8,7 @@ public sealed class Form1 : Form
 {
     private const int PreviewRenderDpi = 160;
     private const int PrintRenderDpi = 600;
+    private static readonly TimeSpan DefaultRateLimitCooldown = TimeSpan.FromMinutes(15);
 
     private readonly CurrentRmsClient _currentRmsClient = new();
     private readonly PdfLabelService _pdfLabelService = new();
@@ -99,6 +100,7 @@ public sealed class Form1 : Form
     private bool _loadingSettings;
     private int _settingsClickCount;
     private DateTime _settingsClickStartedAt = DateTime.MinValue;
+    private DateTime _pdfDownloadPausedUntil = DateTime.MinValue;
     private readonly System.Windows.Forms.Timer _autoDownloadTimer = new();
     private string _cachedViewId = "";
     private DateTime _cachedViewLoadedAt = DateTime.MinValue;
@@ -1023,6 +1025,17 @@ public sealed class Form1 : Form
             return cachedPath;
         }
 
+        if (IsPdfDownloadPaused(out var cooldownMessage))
+        {
+            if (File.Exists(cachedPath))
+            {
+                Log($"Using older cached PDF for opportunity {opportunityId} while rate limited: {cachedPath}");
+                return cachedPath;
+            }
+
+            throw new InvalidOperationException($"{cooldownMessage} No cached PDF is available for opportunity {opportunityId}.");
+        }
+
         return await DownloadOpportunityPdfAsync(opportunityId);
     }
 
@@ -1075,6 +1088,12 @@ public sealed class Form1 : Form
         if (matches.Count == 0)
         {
             Log($"No cached label PDF contained '{barcode}'.");
+            if (IsPdfDownloadPaused(out var cooldownMessage))
+            {
+                Log($"{cooldownMessage} Skipping the full PDF refresh.");
+                return SelectPdfMatch(barcode, viewId, matches);
+            }
+
             Log("Refreshing current jobs and PDFs, then checking once more.");
             candidates = await GetLookupViewCandidatesAsync(viewId, barcode, forceRefresh: true);
             matches = await FindMatchesInCandidatePdfsAsync(candidates, barcode, forcePdfRefresh: true);
@@ -1151,6 +1170,12 @@ public sealed class Form1 : Form
                     Log($"Barcode {barcode} not found in {opportunity.Id} {opportunity.DisplayText}.");
                 }
             }
+            catch (CurrentRmsRateLimitException ex)
+            {
+                MarkPdfDownloadsRateLimited(ex);
+                Log($"Could not check {opportunity.Id} {opportunity.DisplayText}: {ex.Message}");
+                break;
+            }
             catch (Exception ex)
             {
                 Log($"Could not check {opportunity.Id} {opportunity.DisplayText}: {ex.Message}");
@@ -1168,6 +1193,12 @@ public sealed class Form1 : Form
     {
         if (_isBusy || _isAutoDownloading || _settingsPage.Visible)
         {
+            return;
+        }
+
+        if (IsPdfDownloadPaused(out var cooldownMessage))
+        {
+            Log($"{cooldownMessage} Auto-download skipped.");
             return;
         }
 
@@ -1243,6 +1274,12 @@ public sealed class Form1 : Form
                 await DownloadOpportunityPdfAsync(opportunity.Id);
                 downloaded++;
             }
+            catch (CurrentRmsRateLimitException ex)
+            {
+                MarkPdfDownloadsRateLimited(ex);
+                Log($"{label} stopped at {opportunity.Id} {opportunity.DisplayText}: {ex.Message}");
+                return;
+            }
             catch (Exception ex)
             {
                 Log($"{label} skipped {opportunity.Id} {opportunity.DisplayText}: {ex.Message}");
@@ -1253,6 +1290,42 @@ public sealed class Form1 : Form
         }
 
         Log($"{label} complete: {downloaded}/{candidates.Count} PDFs cached.");
+    }
+
+    private bool IsPdfDownloadPaused(out string message)
+    {
+        if (DateTime.Now < _pdfDownloadPausedUntil)
+        {
+            var remaining = _pdfDownloadPausedUntil - DateTime.Now;
+            var minutes = Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes));
+            message = $"Current-RMS PDF downloads are paused for about {minutes} minute(s) after a rate limit.";
+            return true;
+        }
+
+        message = "";
+        return false;
+    }
+
+    private void MarkPdfDownloadsRateLimited(CurrentRmsRateLimitException exception)
+    {
+        var cooldown = exception.RetryAfter ?? DefaultRateLimitCooldown;
+        if (cooldown < TimeSpan.FromMinutes(5))
+        {
+            cooldown = TimeSpan.FromMinutes(5);
+        }
+
+        if (cooldown > TimeSpan.FromHours(1))
+        {
+            cooldown = TimeSpan.FromHours(1);
+        }
+
+        var pausedUntil = DateTime.Now.Add(cooldown);
+        if (pausedUntil > _pdfDownloadPausedUntil)
+        {
+            _pdfDownloadPausedUntil = pausedUntil;
+        }
+
+        Log($"Current-RMS rate limit hit; pausing PDF downloads until {_pdfDownloadPausedUntil:HH:mm}.");
     }
 
     private string? SelectPdfMatch(string barcode, string viewId, List<ViewPdfMatch> matches)

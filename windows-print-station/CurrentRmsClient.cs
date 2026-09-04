@@ -19,7 +19,7 @@ public sealed class CurrentRmsClient
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Current-RMS API test failed: {(int)response.StatusCode} {response.ReasonPhrase}. {TrimForDisplay(body)}");
+            ThrowCurrentRmsRequestFailed(response, "Current-RMS API test failed", body);
         }
 
         return "Current-RMS API connection OK.";
@@ -116,7 +116,7 @@ public sealed class CurrentRmsClient
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Opportunity detail lookup failed for {opportunityId}: {(int)response.StatusCode} {response.ReasonPhrase}. {TrimForDisplay(json)}");
+            ThrowCurrentRmsRequestFailed(response, $"Opportunity detail lookup failed for {opportunityId}", json);
         }
 
         using var document = JsonDocument.Parse(json);
@@ -241,7 +241,7 @@ public sealed class CurrentRmsClient
 
             if (!prepareResponse.IsSuccessStatusCode)
             {
-                throw new InvalidOperationException($"Document prepare failed: {(int)prepareResponse.StatusCode} {prepareResponse.ReasonPhrase}. {TrimForDisplay(json)}");
+                ThrowCurrentRmsRequestFailed(prepareResponse, "Document prepare failed", json);
             }
 
             var preparedDocumentId = ExtractNestedId(json, "opportunity_document");
@@ -250,6 +250,11 @@ public sealed class CurrentRmsClient
         }
         catch (Exception ex)
         {
+            if (ex is CurrentRmsRateLimitException)
+            {
+                throw;
+            }
+
             apiError = ex;
         }
 
@@ -273,7 +278,7 @@ public sealed class CurrentRmsClient
         if (!response.IsSuccessStatusCode)
         {
             var text = bytes.Length > 0 ? TrimForDisplay(Encoding.UTF8.GetString(bytes)) : "";
-            throw new InvalidOperationException($"PDF download failed: {(int)response.StatusCode} {response.ReasonPhrase}. {text}");
+            ThrowCurrentRmsRequestFailed(response, "PDF download failed", text);
         }
 
         if (!LooksLikePdf(bytes))
@@ -300,7 +305,7 @@ public sealed class CurrentRmsClient
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Opportunity lookup failed: {(int)response.StatusCode} {response.ReasonPhrase}. {TrimForDisplay(json)}");
+            ThrowCurrentRmsRequestFailed(response, "Opportunity lookup failed", json);
         }
 
         using var document = JsonDocument.Parse(json);
@@ -355,7 +360,7 @@ public sealed class CurrentRmsClient
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Opportunity detail lookup failed for {match.Id}: {(int)response.StatusCode} {response.ReasonPhrase}. {TrimForDisplay(json)}");
+            ThrowCurrentRmsRequestFailed(response, $"Opportunity detail lookup failed for {match.Id}", json);
         }
 
         using var document = JsonDocument.Parse(json);
@@ -390,7 +395,7 @@ public sealed class CurrentRmsClient
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Member lookup failed for {memberId}: {(int)response.StatusCode} {response.ReasonPhrase}. {TrimForDisplay(json)}");
+            ThrowCurrentRmsRequestFailed(response, $"Member lookup failed for {memberId}", json);
         }
 
         using var document = JsonDocument.Parse(json);
@@ -424,7 +429,7 @@ public sealed class CurrentRmsClient
                     if (!response.IsSuccessStatusCode)
                     {
                         var text = bytes.Length > 0 ? TrimForDisplay(System.Text.Encoding.UTF8.GetString(bytes)) : "";
-                        throw new InvalidOperationException($"PDF download failed: {(int)response.StatusCode} {response.ReasonPhrase}. {text}");
+                        ThrowCurrentRmsRequestFailed(response, "PDF download failed", text);
                     }
 
                     if (!LooksLikePdf(bytes))
@@ -438,6 +443,11 @@ public sealed class CurrentRmsClient
             }
             catch (Exception ex)
             {
+                if (ex is CurrentRmsRateLimitException)
+                {
+                    throw;
+                }
+
                 lastError = ex;
             }
         }
@@ -496,6 +506,34 @@ public sealed class CurrentRmsClient
             query.Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
         var baseUrl = $"https://api.current-rms.com/api/v1{path}";
         return string.IsNullOrWhiteSpace(queryString) ? baseUrl : $"{baseUrl}?{queryString}";
+    }
+
+    private static void ThrowCurrentRmsRequestFailed(HttpResponseMessage response, string context, string body)
+    {
+        var message = $"{context}: {(int)response.StatusCode} {response.ReasonPhrase}. {TrimForDisplay(body)}";
+        if ((int)response.StatusCode == 429)
+        {
+            throw new CurrentRmsRateLimitException(message, ReadRetryAfter(response));
+        }
+
+        throw new InvalidOperationException(message);
+    }
+
+    private static TimeSpan? ReadRetryAfter(HttpResponseMessage response)
+    {
+        var retryAfter = response.Headers.RetryAfter;
+        if (retryAfter?.Delta is { } delta && delta > TimeSpan.Zero)
+        {
+            return delta;
+        }
+
+        if (retryAfter?.Date is { } retryDate)
+        {
+            var delay = retryDate - DateTimeOffset.Now;
+            return delay > TimeSpan.Zero ? delay : null;
+        }
+
+        return null;
     }
 
     private static IEnumerable<KeyValuePair<string, string>> BuildOpportunityQuery(
@@ -893,4 +931,15 @@ public sealed record OpportunityLookupResult(
             return $"{numberPart}{Subject}".Trim();
         }
     }
+}
+
+public sealed class CurrentRmsRateLimitException : InvalidOperationException
+{
+    public CurrentRmsRateLimitException(string message, TimeSpan? retryAfter)
+        : base(message)
+    {
+        RetryAfter = retryAfter;
+    }
+
+    public TimeSpan? RetryAfter { get; }
 }
