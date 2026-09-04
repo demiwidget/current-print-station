@@ -8,7 +8,6 @@ public sealed class Form1 : Form
 {
     private const int PreviewRenderDpi = 160;
     private const int PrintRenderDpi = 600;
-    private static readonly TimeSpan DefaultRateLimitCooldown = TimeSpan.FromMinutes(15);
 
     private readonly CurrentRmsClient _currentRmsClient = new();
     private readonly PdfLabelService _pdfLabelService = new();
@@ -26,6 +25,7 @@ public sealed class Form1 : Form
     private readonly NumericUpDown _jobCacheMinutesBox = new();
     private readonly NumericUpDown _pdfCacheMinutesBox = new();
     private readonly NumericUpDown _autoDownloadMinutesBox = new();
+    private readonly NumericUpDown _rateLimitCooldownMinutesBox = new();
     private readonly TextBox _requiredTagBox = new();
     private readonly TextBox _logoPathBox = new();
     private readonly NumericUpDown _logoXPercentBox = new();
@@ -74,6 +74,8 @@ public sealed class Form1 : Form
     private readonly Label _kioskStatusLabel = new();
     private readonly ProgressBar _progressBar = new();
     private readonly Label _progressLabel = new();
+    private readonly ProgressBar _cooldownProgressBar = new();
+    private readonly Label _cooldownLabel = new();
     private readonly Label _updateNoticeLabel = new();
     private readonly Label _matchLabel = new();
     private readonly PictureBox _previewBox = new();
@@ -100,8 +102,10 @@ public sealed class Form1 : Form
     private bool _loadingSettings;
     private int _settingsClickCount;
     private DateTime _settingsClickStartedAt = DateTime.MinValue;
+    private DateTime _pdfDownloadPausedStartedAt = DateTime.MinValue;
     private DateTime _pdfDownloadPausedUntil = DateTime.MinValue;
     private readonly System.Windows.Forms.Timer _autoDownloadTimer = new();
+    private readonly System.Windows.Forms.Timer _cooldownTimer = new();
     private string _cachedViewId = "";
     private DateTime _cachedViewLoadedAt = DateTime.MinValue;
     private IReadOnlyList<OpportunityLookupResult> _cachedViewOpportunities = [];
@@ -117,6 +121,8 @@ public sealed class Form1 : Form
 
         BuildUi();
         _autoDownloadTimer.Tick += async (_, _) => await AutoDownloadTimerTickAsync();
+        _cooldownTimer.Interval = 1000;
+        _cooldownTimer.Tick += (_, _) => UpdateCooldownDisplay();
         Load += OnLoad;
         FormClosing += OnFormClosing;
     }
@@ -187,10 +193,12 @@ public sealed class Form1 : Form
         var scanPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            RowCount = 8,
+            RowCount = 10,
             ColumnCount = 1,
             Padding = new Padding(0, 16, 24, 0)
         };
+        scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -255,6 +263,22 @@ public sealed class Form1 : Form
         _progressBar.Value = 0;
         _progressBar.Visible = false;
         scanPanel.Controls.Add(_progressBar, 0, 6);
+
+        _cooldownLabel.AutoSize = true;
+        _cooldownLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        _cooldownLabel.ForeColor = Color.FromArgb(132, 83, 20);
+        _cooldownLabel.Padding = new Padding(0, 10, 0, 2);
+        _cooldownLabel.Text = "";
+        _cooldownLabel.Visible = false;
+        scanPanel.Controls.Add(_cooldownLabel, 0, 7);
+
+        _cooldownProgressBar.Dock = DockStyle.Top;
+        _cooldownProgressBar.Height = 18;
+        _cooldownProgressBar.Minimum = 0;
+        _cooldownProgressBar.Maximum = 100;
+        _cooldownProgressBar.Value = 0;
+        _cooldownProgressBar.Visible = false;
+        scanPanel.Controls.Add(_cooldownProgressBar, 0, 8);
 
         var actionsPanel = new TableLayoutPanel
         {
@@ -332,7 +356,7 @@ public sealed class Form1 : Form
         actionsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         actionsPanel.RowCount++;
 
-        scanPanel.Controls.Add(actionsPanel, 0, 7);
+        scanPanel.Controls.Add(actionsPanel, 0, 9);
         root.Controls.Add(scanPanel, 0, 3);
 
         var previewPanel = new TableLayoutPanel
@@ -518,13 +542,17 @@ public sealed class Form1 : Form
         _autoDownloadMinutesBox.Minimum = 0;
         _autoDownloadMinutesBox.Maximum = 240;
         _autoDownloadMinutesBox.Value = 0;
+        _rateLimitCooldownMinutesBox.Minimum = 5;
+        _rateLimitCooldownMinutesBox.Maximum = 60;
+        _rateLimitCooldownMinutesBox.Value = 15;
         _requiredTagBox.PlaceholderText = "Optional tag, e.g. Prep";
         SetTip(_lookupViewIdBox, "The Current-RMS saved view containing the jobs you are actively preparing.");
         SetTip(_lookupDaysAheadBox, "Only scan jobs starting within this many days. Use 0 to include everything in the view.");
         SetTip(_requiredTagBox, "Optional Current-RMS tag filter if your prep jobs have a specific tag.");
         SetTip(_jobCacheMinutesBox, "How long the downloaded job list is reused before asking Current-RMS again.");
         SetTip(_pdfCacheMinutesBox, "How long downloaded label PDFs are reused before redownloading.");
-        SetTip(_autoDownloadMinutesBox, "Set above 0 to refresh and pre-cache current job PDFs in the background.");
+        SetTip(_autoDownloadMinutesBox, "Set above 0 to refresh and pre-cache current job PDFs in the background. 10-15 minutes is kinder to Current-RMS.");
+        SetTip(_rateLimitCooldownMinutesBox, "How long PDF downloads pause after Current-RMS returns a rate-limit response without its own Retry-After time.");
         SetTip(_opportunityIdBox, "Optional manual job/opportunity ID for testing when live lookup is off or fails.");
         SetTip(_localPdfBox, "Optional saved PDF for testing without calling Current-RMS.");
         SetTip(_lookupFilterModesBox, "Advanced Current-RMS lookup filters. Leave as-is unless the lookup needs tuning.");
@@ -533,6 +561,7 @@ public sealed class Form1 : Form
         AddRow(grid, "Job cache mins", _jobCacheMinutesBox);
         AddRow(grid, "PDF cache mins", _pdfCacheMinutesBox);
         AddRow(grid, "Auto-download mins", _autoDownloadMinutesBox);
+        AddRow(grid, "Rate-limit cooldown mins", _rateLimitCooldownMinutesBox);
 
         AddSectionHeading(grid, "Testing and advanced");
         AddRow(grid, "Fallback job ID", _opportunityIdBox);
@@ -777,6 +806,7 @@ public sealed class Form1 : Form
         _barcodeBox.Focus();
         Log($"Started. Log file: {SettingsStore.LogPath}");
         ConfigureAutoDownloadTimer();
+        UpdateCooldownDisplay();
         _ = CheckForUpdatesInBackgroundAsync(showNoUpdateMessage: false);
         await Task.CompletedTask;
     }
@@ -794,6 +824,7 @@ public sealed class Form1 : Form
         _jobCacheMinutesBox.Value = Math.Clamp(_settings.JobCacheMinutes, (int)_jobCacheMinutesBox.Minimum, (int)_jobCacheMinutesBox.Maximum);
         _pdfCacheMinutesBox.Value = Math.Clamp(_settings.PdfCacheMinutes, (int)_pdfCacheMinutesBox.Minimum, (int)_pdfCacheMinutesBox.Maximum);
         _autoDownloadMinutesBox.Value = Math.Clamp(_settings.AutoDownloadMinutes, (int)_autoDownloadMinutesBox.Minimum, (int)_autoDownloadMinutesBox.Maximum);
+        _rateLimitCooldownMinutesBox.Value = Math.Clamp(_settings.RateLimitCooldownMinutes, (int)_rateLimitCooldownMinutesBox.Minimum, (int)_rateLimitCooldownMinutesBox.Maximum);
         _requiredTagBox.Text = _settings.RequiredOpportunityTag;
         _lookupOpportunityBox.Checked = _settings.FindOpportunityFromScan;
         _previewBeforePrintBox.Checked = _settings.PreviewBeforePrint;
@@ -892,6 +923,7 @@ public sealed class Form1 : Form
         _settings.JobCacheMinutes = (int)_jobCacheMinutesBox.Value;
         _settings.PdfCacheMinutes = (int)_pdfCacheMinutesBox.Value;
         _settings.AutoDownloadMinutes = (int)_autoDownloadMinutesBox.Value;
+        _settings.RateLimitCooldownMinutes = (int)_rateLimitCooldownMinutesBox.Value;
         _settings.RequiredOpportunityTag = _requiredTagBox.Text.Trim();
         _settings.PreviewBeforePrint = _previewBeforePrintBox.Checked;
         _settings.PrintOnSecondScan = _printOnSecondScanBox.Checked;
@@ -1302,13 +1334,21 @@ public sealed class Form1 : Form
             return true;
         }
 
+        if (_pdfDownloadPausedUntil != DateTime.MinValue)
+        {
+            _pdfDownloadPausedStartedAt = DateTime.MinValue;
+            _pdfDownloadPausedUntil = DateTime.MinValue;
+            UpdateCooldownDisplay();
+        }
+
         message = "";
         return false;
     }
 
     private void MarkPdfDownloadsRateLimited(CurrentRmsRateLimitException exception)
     {
-        var cooldown = exception.RetryAfter ?? DefaultRateLimitCooldown;
+        var configuredCooldown = TimeSpan.FromMinutes((int)_rateLimitCooldownMinutesBox.Value);
+        var cooldown = exception.RetryAfter ?? configuredCooldown;
         if (cooldown < TimeSpan.FromMinutes(5))
         {
             cooldown = TimeSpan.FromMinutes(5);
@@ -1322,10 +1362,12 @@ public sealed class Form1 : Form
         var pausedUntil = DateTime.Now.Add(cooldown);
         if (pausedUntil > _pdfDownloadPausedUntil)
         {
+            _pdfDownloadPausedStartedAt = DateTime.Now;
             _pdfDownloadPausedUntil = pausedUntil;
         }
 
         Log($"Current-RMS rate limit hit; pausing PDF downloads until {_pdfDownloadPausedUntil:HH:mm}.");
+        UpdateCooldownDisplay();
     }
 
     private string? SelectPdfMatch(string barcode, string viewId, List<ViewPdfMatch> matches)
@@ -2006,6 +2048,52 @@ public sealed class Form1 : Form
         _progressLabel.Text = message;
         _progressBar.Refresh();
         _progressLabel.Refresh();
+    }
+
+    private void UpdateCooldownDisplay()
+    {
+        if (DateTime.Now >= _pdfDownloadPausedUntil)
+        {
+            _cooldownTimer.Stop();
+            _cooldownLabel.Visible = false;
+            _cooldownProgressBar.Visible = false;
+            _cooldownProgressBar.Value = 0;
+            _pdfDownloadPausedStartedAt = DateTime.MinValue;
+            _pdfDownloadPausedUntil = DateTime.MinValue;
+            return;
+        }
+
+        var total = _pdfDownloadPausedUntil - _pdfDownloadPausedStartedAt;
+        var remaining = _pdfDownloadPausedUntil - DateTime.Now;
+        if (total <= TimeSpan.Zero)
+        {
+            total = TimeSpan.FromMinutes(Math.Max(1, (int)_rateLimitCooldownMinutesBox.Value));
+        }
+
+        var remainingRatio = Math.Clamp(remaining.TotalSeconds / Math.Max(1d, total.TotalSeconds), 0d, 1d);
+        _cooldownProgressBar.Visible = true;
+        _cooldownLabel.Visible = true;
+        _cooldownProgressBar.Value = Math.Clamp((int)Math.Round(remainingRatio * _cooldownProgressBar.Maximum), 0, _cooldownProgressBar.Maximum);
+        _cooldownLabel.Text = $"Current-RMS cooldown: {FormatCooldownRemaining(remaining)} remaining";
+        _cooldownLabel.Refresh();
+        _cooldownProgressBar.Refresh();
+
+        if (!_cooldownTimer.Enabled)
+        {
+            _cooldownTimer.Start();
+        }
+    }
+
+    private static string FormatCooldownRemaining(TimeSpan remaining)
+    {
+        if (remaining.TotalSeconds <= 0)
+        {
+            return "0:00";
+        }
+
+        return remaining.TotalHours >= 1
+            ? $"{(int)remaining.TotalHours}:{remaining.Minutes:00}:{remaining.Seconds:00}"
+            : $"{remaining.Minutes}:{remaining.Seconds:00}";
     }
 
     private void Log(string message)
