@@ -72,6 +72,7 @@ public sealed class Form1 : Form
     private readonly ToolTip _toolTip = new();
     private readonly Label _statusLabel = new();
     private readonly Label _kioskStatusLabel = new();
+    private readonly Label _apiCallCountLabel = new();
     private readonly ProgressBar _progressBar = new();
     private readonly Label _progressLabel = new();
     private readonly ProgressBar _cooldownProgressBar = new();
@@ -106,6 +107,8 @@ public sealed class Form1 : Form
     private DateTime _pdfDownloadPausedUntil = DateTime.MinValue;
     private readonly System.Windows.Forms.Timer _autoDownloadTimer = new();
     private readonly System.Windows.Forms.Timer _cooldownTimer = new();
+    private readonly System.Windows.Forms.Timer _apiCallCountTimer = new();
+    private readonly Queue<DateTime> _apiCallTimes = new();
     private string _cachedViewId = "";
     private DateTime _cachedViewLoadedAt = DateTime.MinValue;
     private IReadOnlyList<OpportunityLookupResult> _cachedViewOpportunities = [];
@@ -120,9 +123,12 @@ public sealed class Form1 : Form
         Font = new Font("Segoe UI", 10F);
 
         BuildUi();
+        _currentRmsClient.ApiRequestSent += RecordApiRequestSent;
         _autoDownloadTimer.Tick += async (_, _) => await AutoDownloadTimerTickAsync();
         _cooldownTimer.Interval = 1000;
         _cooldownTimer.Tick += (_, _) => UpdateCooldownDisplay();
+        _apiCallCountTimer.Interval = 1000;
+        _apiCallCountTimer.Tick += (_, _) => UpdateApiCallCountDisplay();
         Load += OnLoad;
         FormClosing += OnFormClosing;
     }
@@ -193,10 +199,11 @@ public sealed class Form1 : Form
         var scanPanel = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            RowCount = 10,
+            RowCount = 11,
             ColumnCount = 1,
             Padding = new Padding(0, 16, 24, 0)
         };
+        scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         scanPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -249,12 +256,19 @@ public sealed class Form1 : Form
         _kioskStatusLabel.Text = "Ready.";
         scanPanel.Controls.Add(_kioskStatusLabel, 0, 4);
 
+        _apiCallCountLabel.AutoSize = true;
+        _apiCallCountLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+        _apiCallCountLabel.ForeColor = Color.FromArgb(65, 78, 86);
+        _apiCallCountLabel.Padding = new Padding(0, 6, 0, 0);
+        _apiCallCountLabel.Text = "Current-RMS API calls: 0 in the last 60s";
+        scanPanel.Controls.Add(_apiCallCountLabel, 0, 5);
+
         _progressLabel.AutoSize = true;
         _progressLabel.Font = new Font("Segoe UI", 10F);
         _progressLabel.ForeColor = Color.FromArgb(65, 78, 86);
         _progressLabel.Padding = new Padding(0, 10, 0, 2);
         _progressLabel.Text = "";
-        scanPanel.Controls.Add(_progressLabel, 0, 5);
+        scanPanel.Controls.Add(_progressLabel, 0, 6);
 
         _progressBar.Dock = DockStyle.Top;
         _progressBar.Height = 18;
@@ -262,7 +276,7 @@ public sealed class Form1 : Form
         _progressBar.Maximum = 100;
         _progressBar.Value = 0;
         _progressBar.Visible = false;
-        scanPanel.Controls.Add(_progressBar, 0, 6);
+        scanPanel.Controls.Add(_progressBar, 0, 7);
 
         _cooldownLabel.AutoSize = true;
         _cooldownLabel.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
@@ -270,7 +284,7 @@ public sealed class Form1 : Form
         _cooldownLabel.Padding = new Padding(0, 10, 0, 2);
         _cooldownLabel.Text = "";
         _cooldownLabel.Visible = false;
-        scanPanel.Controls.Add(_cooldownLabel, 0, 7);
+        scanPanel.Controls.Add(_cooldownLabel, 0, 8);
 
         _cooldownProgressBar.Dock = DockStyle.Top;
         _cooldownProgressBar.Height = 18;
@@ -278,7 +292,7 @@ public sealed class Form1 : Form
         _cooldownProgressBar.Maximum = 100;
         _cooldownProgressBar.Value = 0;
         _cooldownProgressBar.Visible = false;
-        scanPanel.Controls.Add(_cooldownProgressBar, 0, 8);
+        scanPanel.Controls.Add(_cooldownProgressBar, 0, 9);
 
         var actionsPanel = new TableLayoutPanel
         {
@@ -356,7 +370,7 @@ public sealed class Form1 : Form
         actionsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         actionsPanel.RowCount++;
 
-        scanPanel.Controls.Add(actionsPanel, 0, 9);
+        scanPanel.Controls.Add(actionsPanel, 0, 10);
         root.Controls.Add(scanPanel, 0, 3);
 
         var previewPanel = new TableLayoutPanel
@@ -807,6 +821,8 @@ public sealed class Form1 : Form
         Log($"Started. Log file: {SettingsStore.LogPath}");
         ConfigureAutoDownloadTimer();
         UpdateCooldownDisplay();
+        UpdateApiCallCountDisplay();
+        _apiCallCountTimer.Start();
         _ = CheckForUpdatesInBackgroundAsync(showNoUpdateMessage: false);
         await Task.CompletedTask;
     }
@@ -2032,6 +2048,35 @@ public sealed class Form1 : Form
         _kioskStatusLabel.Text = message;
     }
 
+    private void RecordApiRequestSent(DateTime timestamp)
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => RecordApiRequestSent(timestamp)));
+            return;
+        }
+
+        _apiCallTimes.Enqueue(timestamp);
+        UpdateApiCallCountDisplay();
+    }
+
+    private void UpdateApiCallCountDisplay()
+    {
+        var cutoff = DateTime.Now.AddSeconds(-60);
+        while (_apiCallTimes.Count > 0 && _apiCallTimes.Peek() < cutoff)
+        {
+            _apiCallTimes.Dequeue();
+        }
+
+        _apiCallCountLabel.Text = $"Current-RMS API calls: {_apiCallTimes.Count} in the last 60s";
+        _apiCallCountLabel.Refresh();
+    }
+
     private void SetProgress(int current, int total, string message)
     {
         if (total <= 0)
@@ -2269,6 +2314,8 @@ public sealed class Form1 : Form
         if (disposing)
         {
             _autoDownloadTimer.Dispose();
+            _cooldownTimer.Dispose();
+            _apiCallCountTimer.Dispose();
             _toolTip.Dispose();
             _previewBitmap?.Dispose();
         }

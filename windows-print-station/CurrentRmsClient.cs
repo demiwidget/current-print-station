@@ -8,13 +8,15 @@ public sealed class CurrentRmsClient
 {
     private readonly HttpClient _httpClient = new();
 
+    public event Action<DateTime>? ApiRequestSent;
+
     public async Task<string> TestConnectionAsync(string subdomain, string apiKey, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.current-rms.com/api/v1/members/1");
         AddAuthHeaders(request, subdomain, apiKey);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -111,7 +113,7 @@ public sealed class CurrentRmsClient
 
         var url = BuildApiUrl($"/opportunities/{Uri.EscapeDataString(opportunityId.Trim())}", []);
         using var request = BuildJsonAuthRequest(url, subdomain, apiKey);
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -236,7 +238,7 @@ public sealed class CurrentRmsClient
                 $"/opportunities/{Uri.EscapeDataString(opportunityId)}/prepare_document",
                 new[] { new KeyValuePair<string, string>("document_id", documentId) });
             using var prepareRequest = BuildJsonAuthRequest(prepareUrl, subdomain, apiKey);
-            using var prepareResponse = await _httpClient.SendAsync(prepareRequest, cancellationToken);
+            using var prepareResponse = await SendAsync(prepareRequest, cancellationToken);
             var json = await prepareResponse.Content.ReadAsStringAsync(cancellationToken);
 
             if (!prepareResponse.IsSuccessStatusCode)
@@ -272,7 +274,7 @@ public sealed class CurrentRmsClient
     private async Task<byte[]> DownloadPdfFromApiAsync(string pdfUrl, string subdomain, string apiKey, CancellationToken cancellationToken)
     {
         using var request = BuildHeaderAuthRequest(pdfUrl, subdomain, apiKey);
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, cancellationToken);
         var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -300,7 +302,7 @@ public sealed class CurrentRmsClient
     {
         var url = BuildApiUrl("/opportunities", query);
         using var request = BuildJsonAuthRequest(url, subdomain, apiKey);
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -355,7 +357,7 @@ public sealed class CurrentRmsClient
                 new KeyValuePair<string, string>("include[]", "opportunity_items")
             });
         using var request = BuildJsonAuthRequest(url, subdomain, apiKey);
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -390,7 +392,7 @@ public sealed class CurrentRmsClient
     {
         var url = BuildApiUrl($"/members/{Uri.EscapeDataString(memberId.Trim())}", []);
         using var request = BuildJsonAuthRequest(url, subdomain, apiKey);
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, cancellationToken);
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -422,7 +424,7 @@ public sealed class CurrentRmsClient
             try
             {
                 using (request)
-                using (var response = await _httpClient.SendAsync(request, cancellationToken))
+                using (var response = await SendAsync(request, cancellationToken))
                 {
                     var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
 
@@ -453,6 +455,12 @@ public sealed class CurrentRmsClient
         }
 
         throw new InvalidOperationException(lastError?.Message ?? "PDF download failed.");
+    }
+
+    private Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        ApiRequestSent?.Invoke(DateTime.Now);
+        return _httpClient.SendAsync(request, cancellationToken);
     }
 
     private static HttpRequestMessage BuildHeaderAuthRequest(string url, string subdomain, string apiKey)
