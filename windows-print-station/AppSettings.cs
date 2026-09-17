@@ -11,6 +11,7 @@ public sealed class AppSettings
     public string DocumentId { get; set; } = "1000167";
     public string OpportunityId { get; set; } = "";
     public string PrinterName { get; set; } = "";
+    public bool FlightcaseLabelLandscape { get; set; } = true;
     public string InsideLabelPrinterName { get; set; } = "";
     public decimal InsideLabelWidthMm { get; set; } = 89;
     public decimal InsideLabelHeightMm { get; set; } = 28;

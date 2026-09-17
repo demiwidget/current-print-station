@@ -9,7 +9,7 @@ public sealed class PrintService
         return PrinterSettings.InstalledPrinters.Cast<string>().OrderBy(name => name).ToList();
     }
 
-    public void PrintImage(Image image, string printerName, string jobName, int copies = 1)
+    public void PrintImage(Image image, string printerName, string jobName, bool landscape, int copies = 1)
     {
         if (string.IsNullOrWhiteSpace(printerName))
         {
@@ -35,7 +35,7 @@ public sealed class PrintService
         }
 
         document.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
-        document.DefaultPageSettings.Landscape = image.Width > image.Height;
+        document.DefaultPageSettings.Landscape = landscape;
 
         var pageIndex = 0;
         document.PrintPage += (_, e) =>

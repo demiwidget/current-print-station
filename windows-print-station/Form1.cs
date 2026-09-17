@@ -45,6 +45,7 @@ public sealed class Form1 : Form
     private readonly NumericUpDown _productionLabelTopMmBox = new();
     private readonly NumericUpDown _flightcaseLabelQuantityBox = new();
     private readonly NumericUpDown _productionLabelQuantityBox = new();
+    private readonly CheckBox _flightcaseLabelLandscapeBox = new();
     private readonly CheckBox _insideLabelLandscapeBox = new();
     private readonly CheckBox _productionLabelLandscapeBox = new();
     private readonly CheckBox _autoPrintBox = new();
@@ -663,6 +664,8 @@ public sealed class Form1 : Form
         ConfigureMillimetreBox(_productionLabelHeightMmBox, 10, 120, 28);
         ConfigureMillimetreBox(_productionLabelLeftMmBox, -10, 30, 1);
         ConfigureMillimetreBox(_productionLabelTopMmBox, -10, 30, 2);
+        _flightcaseLabelLandscapeBox.Text = "Flightcase labels landscape";
+        _flightcaseLabelLandscapeBox.AutoSize = true;
         _insideLabelLandscapeBox.Text = "Inside labels landscape";
         _insideLabelLandscapeBox.AutoSize = true;
         _productionLabelLandscapeBox.Text = "Production labels landscape";
@@ -676,6 +679,7 @@ public sealed class Form1 : Form
         ConfigureLogoPercentBox(_logoYPercentBox, 0, 100, 3.5m);
         ConfigureLogoPercentBox(_logoWidthPercentBox, 1, 60, 18);
         SetTip(_printerBox, "Printer used for the main flightcase label.");
+        SetTip(_flightcaseLabelLandscapeBox, "Keeps the main label landscape even though Current supplies it on a portrait A4 PDF page.");
         SetTip(_insideLabelPrinterBox, "Small-label printer used for item labels inside the case.");
         SetTip(_productionLabelPrinterBox, "Printer used for production/client/job labels.");
         SetTip(_productionLabelLeftMmBox, "Moves the printed production label text left or right. Negative values can clip on some printers.");
@@ -687,6 +691,10 @@ public sealed class Form1 : Form
 
         AddSectionHeading(grid, "Flightcase labels");
         AddRow(grid, "Printer", _printerBox);
+        grid.Controls.Add(_flightcaseLabelLandscapeBox, 0, grid.RowCount);
+        grid.SetColumnSpan(_flightcaseLabelLandscapeBox, 2);
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        grid.RowCount++;
 
         AddSectionHeading(grid, "Inside case labels");
         AddRow(grid, "Printer", _insideLabelPrinterBox);
@@ -847,6 +855,7 @@ public sealed class Form1 : Form
         _autoPrintBox.Checked = _settings.AutoPrint;
         _printOnSecondScanBox.Checked = _settings.PrintOnSecondScan;
         _printInsideLabelsWithFlightcaseBox.Checked = _settings.PrintInsideLabelsWithFlightcase;
+        _flightcaseLabelLandscapeBox.Checked = _settings.FlightcaseLabelLandscape;
         _insideLabelWidthMmBox.Value = ClampDecimal(_settings.InsideLabelWidthMm, _insideLabelWidthMmBox.Minimum, _insideLabelWidthMmBox.Maximum);
         _insideLabelHeightMmBox.Value = ClampDecimal(_settings.InsideLabelHeightMm, _insideLabelHeightMmBox.Minimum, _insideLabelHeightMmBox.Maximum);
         _insideLabelLandscapeBox.Checked = _settings.InsideLabelLandscape;
@@ -921,6 +930,7 @@ public sealed class Form1 : Form
         _settings.OpportunityId = _opportunityIdBox.Text.Trim();
         _settings.LastPdfPath = _localPdfBox.Text.Trim();
         _settings.PrinterName = _printerBox.SelectedItem?.ToString() ?? "";
+        _settings.FlightcaseLabelLandscape = _flightcaseLabelLandscapeBox.Checked;
         _settings.InsideLabelPrinterName = _insideLabelPrinterBox.SelectedItem?.ToString() ?? "";
         _settings.InsideLabelWidthMm = _insideLabelWidthMmBox.Value;
         _settings.InsideLabelHeightMm = _insideLabelHeightMmBox.Value;
@@ -1612,8 +1622,9 @@ public sealed class Form1 : Form
         var printBitmap = ApplyLogoOverlayIfConfigured(_pdfLabelService.RenderPage(_lastPreviewPdfPath, _lastMatch, PrintRenderDpi));
         try
         {
-            _printService.PrintImage(printBitmap, printerName, jobName, copies);
-            Log($"Sent {copies} flightcase label(s) to printer: {printerName} using {PrintRenderDpi} DPI render.");
+            var landscape = _flightcaseLabelLandscapeBox.Checked;
+            _printService.PrintImage(printBitmap, printerName, jobName, landscape, copies);
+            Log($"Sent {copies} flightcase label(s) to printer: {printerName} in {(landscape ? "landscape" : "portrait")} using {PrintRenderDpi} DPI render.");
         }
         finally
         {
