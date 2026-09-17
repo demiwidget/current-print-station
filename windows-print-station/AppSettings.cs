@@ -30,6 +30,7 @@ public sealed class AppSettings
     public int JobCacheMinutes { get; set; } = 5;
     public int PdfCacheMinutes { get; set; } = 30;
     public int AutoDownloadMinutes { get; set; }
+    public int AutoDownloadBatchSize { get; set; } = 3;
     public int RateLimitCooldownMinutes { get; set; } = 15;
     public string RequiredOpportunityTag { get; set; } = "";
     public bool PreviewBeforePrint { get; set; }

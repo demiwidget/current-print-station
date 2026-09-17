@@ -25,6 +25,7 @@ public sealed class Form1 : Form
     private readonly NumericUpDown _jobCacheMinutesBox = new();
     private readonly NumericUpDown _pdfCacheMinutesBox = new();
     private readonly NumericUpDown _autoDownloadMinutesBox = new();
+    private readonly NumericUpDown _autoDownloadBatchSizeBox = new();
     private readonly NumericUpDown _rateLimitCooldownMinutesBox = new();
     private readonly TextBox _requiredTagBox = new();
     private readonly TextBox _logoPathBox = new();
@@ -557,6 +558,9 @@ public sealed class Form1 : Form
         _autoDownloadMinutesBox.Minimum = 0;
         _autoDownloadMinutesBox.Maximum = 240;
         _autoDownloadMinutesBox.Value = 0;
+        _autoDownloadBatchSizeBox.Minimum = 1;
+        _autoDownloadBatchSizeBox.Maximum = 50;
+        _autoDownloadBatchSizeBox.Value = 3;
         _rateLimitCooldownMinutesBox.Minimum = 5;
         _rateLimitCooldownMinutesBox.Maximum = 60;
         _rateLimitCooldownMinutesBox.Value = 15;
@@ -567,6 +571,7 @@ public sealed class Form1 : Form
         SetTip(_jobCacheMinutesBox, "How long the downloaded job list is reused before asking Current-RMS again.");
         SetTip(_pdfCacheMinutesBox, "How long downloaded label PDFs are reused before redownloading.");
         SetTip(_autoDownloadMinutesBox, "Set above 0 to refresh and pre-cache current job PDFs in the background. 10-15 minutes is kinder to Current-RMS.");
+        SetTip(_autoDownloadBatchSizeBox, "Maximum PDFs updated on each automatic refresh. The oldest cached PDFs are updated first; 3 keeps API bursts small.");
         SetTip(_rateLimitCooldownMinutesBox, "How long PDF downloads pause after Current-RMS returns a rate-limit response without its own Retry-After time.");
         SetTip(_opportunityIdBox, "Optional manual job/opportunity ID for testing when live lookup is off or fails.");
         SetTip(_localPdfBox, "Optional saved PDF for testing without calling Current-RMS.");
@@ -576,6 +581,7 @@ public sealed class Form1 : Form
         AddRow(grid, "Job cache mins", _jobCacheMinutesBox);
         AddRow(grid, "PDF cache mins", _pdfCacheMinutesBox);
         AddRow(grid, "Auto-download mins", _autoDownloadMinutesBox);
+        AddRow(grid, "PDFs per auto refresh", _autoDownloadBatchSizeBox);
         AddRow(grid, "Rate-limit cooldown mins", _rateLimitCooldownMinutesBox);
 
         AddSectionHeading(grid, "Testing and advanced");
@@ -848,6 +854,7 @@ public sealed class Form1 : Form
         _jobCacheMinutesBox.Value = Math.Clamp(_settings.JobCacheMinutes, (int)_jobCacheMinutesBox.Minimum, (int)_jobCacheMinutesBox.Maximum);
         _pdfCacheMinutesBox.Value = Math.Clamp(_settings.PdfCacheMinutes, (int)_pdfCacheMinutesBox.Minimum, (int)_pdfCacheMinutesBox.Maximum);
         _autoDownloadMinutesBox.Value = Math.Clamp(_settings.AutoDownloadMinutes, (int)_autoDownloadMinutesBox.Minimum, (int)_autoDownloadMinutesBox.Maximum);
+        _autoDownloadBatchSizeBox.Value = Math.Clamp(_settings.AutoDownloadBatchSize, (int)_autoDownloadBatchSizeBox.Minimum, (int)_autoDownloadBatchSizeBox.Maximum);
         _rateLimitCooldownMinutesBox.Value = Math.Clamp(_settings.RateLimitCooldownMinutes, (int)_rateLimitCooldownMinutesBox.Minimum, (int)_rateLimitCooldownMinutesBox.Maximum);
         _requiredTagBox.Text = _settings.RequiredOpportunityTag;
         _lookupOpportunityBox.Checked = _settings.FindOpportunityFromScan;
@@ -949,6 +956,7 @@ public sealed class Form1 : Form
         _settings.JobCacheMinutes = (int)_jobCacheMinutesBox.Value;
         _settings.PdfCacheMinutes = (int)_pdfCacheMinutesBox.Value;
         _settings.AutoDownloadMinutes = (int)_autoDownloadMinutesBox.Value;
+        _settings.AutoDownloadBatchSize = (int)_autoDownloadBatchSizeBox.Value;
         _settings.RateLimitCooldownMinutes = (int)_rateLimitCooldownMinutesBox.Value;
         _settings.RequiredOpportunityTag = _requiredTagBox.Text.Trim();
         _settings.PreviewBeforePrint = _previewBeforePrintBox.Checked;
@@ -1217,11 +1225,15 @@ public sealed class Form1 : Form
             {
                 var pdfPath = forcePdfRefresh
                     ? await DownloadOpportunityPdfAsync(opportunity.Id)
-                    : await GetCachedOrDownloadOpportunityPdfAsync(opportunity.Id);
+                    : await GetCachedPdfOrDownloadIfMissingAsync(opportunity.Id);
                 if (_pdfLabelService.TryFindBarcodePage(pdfPath, barcode, out var match))
                 {
                     matches.Add(new ViewPdfMatch(opportunity, pdfPath, match.PageNumber));
                     Log($"Barcode {barcode} found in {DescribeOpportunity(opportunity)} on PDF page {match.PageNumber}.");
+                    if (IsLikelyUniqueCaseScan(barcode))
+                    {
+                        break;
+                    }
                 }
                 else
                 {
@@ -1269,7 +1281,11 @@ public sealed class Form1 : Form
         _isAutoDownloading = true;
         try
         {
-            await RefreshCurrentJobPdfsAsync(viewId, "Auto-download", stopIfScanStarts: true);
+            await RefreshCurrentJobPdfsAsync(
+                viewId,
+                "Auto-download",
+                stopIfScanStarts: true,
+                maxDownloads: (int)_autoDownloadBatchSizeBox.Value);
         }
         catch (Exception ex)
         {
@@ -1304,7 +1320,7 @@ public sealed class Form1 : Form
         });
     }
 
-    private async Task RefreshCurrentJobPdfsAsync(string viewId, string label, bool stopIfScanStarts)
+    private async Task RefreshCurrentJobPdfsAsync(string viewId, string label, bool stopIfScanStarts, int? maxDownloads = null)
     {
         Log($"{label} started.");
         var opportunities = await LoadLookupViewOpportunitiesAsync(viewId);
@@ -1312,6 +1328,15 @@ public sealed class Form1 : Form
         if (candidates.Count == 0)
         {
             candidates = opportunities.ToList();
+        }
+
+        if (maxDownloads is > 0 && candidates.Count > maxDownloads.Value)
+        {
+            candidates = candidates
+                .OrderBy(opportunity => GetCachedPdfLastWriteTimeUtc(opportunity.Id))
+                .Take(maxDownloads.Value)
+                .ToList();
+            Log($"{label} limited to {candidates.Count} oldest/missing PDFs to reduce API calls.");
         }
 
         SetProgress(0, candidates.Count, $"{label}: 0 of {candidates.Count}");
@@ -1348,6 +1373,24 @@ public sealed class Form1 : Form
         }
 
         Log($"{label} complete: {downloaded}/{candidates.Count} PDFs cached.");
+    }
+
+    private async Task<string> GetCachedPdfOrDownloadIfMissingAsync(string opportunityId)
+    {
+        var cachedPath = BuildCachedPdfPath(opportunityId);
+        if (File.Exists(cachedPath))
+        {
+            Log($"Using locally cached PDF for opportunity {opportunityId}: {cachedPath}");
+            return cachedPath;
+        }
+
+        return await GetCachedOrDownloadOpportunityPdfAsync(opportunityId);
+    }
+
+    private DateTime GetCachedPdfLastWriteTimeUtc(string opportunityId)
+    {
+        var path = BuildCachedPdfPath(opportunityId);
+        return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
     }
 
     private bool IsPdfDownloadPaused(out string message)
