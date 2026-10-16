@@ -313,7 +313,8 @@ public sealed class Form1 : Form
         ConfigureQuantityBox(_flightcaseLabelQuantityBox, 1, 999, 1);
         ConfigureQuantityBox(_productionLabelQuantityBox, 1, 999, 1);
         ConfigureButton(_scanButton, "Find / Preview", async () => await ProcessScanAsync());
-        ConfigureButton(_refreshPdfsButton, "Refresh PDFs", async () => await ManualRefreshPdfsAsync());
+        ConfigureButton(_refreshPdfsButton, "Force Refresh PDFs", async () => await ManualRefreshPdfsAsync());
+        SetTip(_refreshPdfsButton, "Immediately refreshes all current job PDFs, even while the app cooldown timer is active.");
         ConfigureButton(_printButton, "Print Flightcase Label", PrintAndReset);
         ConfigureButton(_stillagePrintButton, "Stillage Print (2)", StillagePrintAndReset);
         ConfigureButton(_clearButton, "Reset", ResetForNextScan);
@@ -1301,8 +1302,16 @@ public sealed class Form1 : Form
 
     private async Task ManualRefreshPdfsAsync()
     {
+        var bypassedCooldown = DateTime.Now < _pdfDownloadPausedUntil;
+        ClearPdfDownloadCooldown();
+
         await RunBusyAsync("Refreshing current job PDFs...", async () =>
         {
+            if (bypassedCooldown)
+            {
+                Log("Manual force refresh bypassed the local Current-RMS cooldown timer.");
+            }
+
             var viewId = _lookupViewIdBox.Text.Trim();
             if (string.IsNullOrWhiteSpace(viewId))
             {
@@ -1318,6 +1327,13 @@ public sealed class Form1 : Form
 
             await RefreshCurrentJobPdfsAsync(viewId, "Manual refresh", stopIfScanStarts: false);
         });
+    }
+
+    private void ClearPdfDownloadCooldown()
+    {
+        _pdfDownloadPausedStartedAt = DateTime.MinValue;
+        _pdfDownloadPausedUntil = DateTime.MinValue;
+        UpdateCooldownDisplay();
     }
 
     private async Task RefreshCurrentJobPdfsAsync(string viewId, string label, bool stopIfScanStarts, int? maxDownloads = null)
@@ -1405,9 +1421,7 @@ public sealed class Form1 : Form
 
         if (_pdfDownloadPausedUntil != DateTime.MinValue)
         {
-            _pdfDownloadPausedStartedAt = DateTime.MinValue;
-            _pdfDownloadPausedUntil = DateTime.MinValue;
-            UpdateCooldownDisplay();
+            ClearPdfDownloadCooldown();
         }
 
         message = "";
